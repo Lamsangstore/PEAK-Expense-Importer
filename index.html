@@ -1,0 +1,1483 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>PEAK Expense Importer · Lamsang</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@400;500;600&family=Noto+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!-- PDF.js (UMD build — works with file:// protocol) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- JSZip -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- SheetJS -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+
+<style>
+  :root {
+    --bg: #fafafa;
+    --surface: #ffffff;
+    --surface-2: #f5f5f7;
+    --border: #e5e5ea;
+    --border-strong: #d1d1d6;
+    --text: #1d1d1f;
+    --text-2: #6e6e73;
+    --text-3: #86868b;
+    --accent: #0071e3;
+    --accent-hover: #0077ed;
+    --accent-soft: #e8f2fe;
+    --success: #30a46c;
+    --success-soft: #e6f6ee;
+    --warn: #ff9500;
+    --warn-soft: #fff4e5;
+    --danger: #ff3b30;
+    --danger-soft: #ffe8e6;
+    --shopee: #ee4d2d;
+    --shopee-soft: #feece8;
+    --spx-rct: #8b5cf6;
+    --spx-rct-soft: #f1ebff;
+    --spx-tiv: #06b6d4;
+    --spx-tiv-soft: #e0f7fc;
+    --font-display: 'Manrope', 'Noto Sans Thai', sans-serif;
+    --font-body: 'Inter', 'Noto Sans Thai', sans-serif;
+    --font-thai: 'Noto Sans Thai', 'Manrope', sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --radius-sm: 8px;
+    --radius: 12px;
+    --radius-lg: 18px;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow: 0 4px 16px rgba(0,0,0,0.06);
+    --shadow-lg: 0 20px 48px rgba(0,0,0,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-thai);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  /* subtle dot grid atmosphere */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: radial-gradient(circle at 1px 1px, rgba(0,0,0,0.025) 1px, transparent 0);
+    background-size: 24px 24px;
+    z-index: -1;
+    pointer-events: none;
+  }
+
+  .topnav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(255,255,255,0.75);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--border);
+  }
+  .topnav-inner {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .brand-logo {
+    width: 34px; height: 34px; border-radius: 9px;
+    background: linear-gradient(135deg, #1d1d1f 0%, #3a3a3c 100%);
+    display: grid; place-items: center;
+    color: #fff;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 15px;
+    letter-spacing: -0.03em;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .brand-text {
+    display: flex; flex-direction: column; line-height: 1.1;
+  }
+  .brand-name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+  .brand-sub {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .topnav-actions {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-2);
+  }
+  .pill-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success);
+  }
+
+  main {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+  }
+
+  /* Hero / header */
+  .hero {
+    margin-bottom: 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .hero-title {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+  }
+  .hero-title .mono {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 0.7em;
+    color: var(--text-3);
+    margin-left: 8px;
+    letter-spacing: 0;
+  }
+  .hero-desc {
+    margin-top: 8px;
+    color: var(--text-2);
+    font-size: 14.5px;
+    max-width: 680px;
+  }
+
+  /* Step indicator */
+  .steps {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .steps .chev { opacity: 0.4; }
+
+  /* Layout */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    box-shadow: var(--shadow-sm);
+  }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+    gap: 12px;
+  }
+  .card-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: -0.01em;
+  }
+  .card-sub {
+    font-size: 12.5px;
+    color: var(--text-2);
+    margin-top: 3px;
+  }
+  .card-badge {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 500;
+    background: var(--surface-2);
+    padding: 4px 8px;
+    border-radius: 6px;
+  }
+
+  /* Dropzone */
+  .dropzone {
+    position: relative;
+    border: 2px dashed var(--border-strong);
+    border-radius: var(--radius);
+    padding: 36px 24px;
+    text-align: center;
+    background: var(--surface-2);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+  }
+  .dropzone:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .dropzone.active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    transform: scale(1.005);
+  }
+  .dropzone.has-file {
+    border-style: solid;
+    border-color: var(--success);
+    background: var(--success-soft);
+  }
+  .dropzone input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  }
+  .drop-icon {
+    width: 44px; height: 44px;
+    display: grid; place-items: center;
+    background: var(--surface);
+    border-radius: 12px;
+    box-shadow: var(--shadow-sm);
+  }
+  .drop-icon svg { width: 22px; height: 22px; }
+  .drop-title {
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .drop-sub {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-3);
+    letter-spacing: 0.02em;
+  }
+
+  /* Config */
+  .config-row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .config-row:last-child { border-bottom: none; }
+  .config-label {
+    font-size: 13px;
+    color: var(--text-2);
+    font-weight: 500;
+  }
+  .config-input {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+  .config-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .config-row .help {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    grid-column: 2;
+    margin-top: -2px;
+  }
+  .config-group {
+    margin-bottom: 14px;
+  }
+  .config-group-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .config-group-title .tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9.5px;
+  }
+  .config-group-title .tag.shopee { background: var(--shopee-soft); color: var(--shopee); }
+  .config-group-title .tag.spx-tiv { background: var(--spx-tiv-soft); color: var(--spx-tiv); }
+  .config-group-title .tag.spx-rct { background: var(--spx-rct-soft); color: var(--spx-rct); }
+
+  /* Action bar */
+  .actions {
+    display: flex; gap: 10px; flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-family: var(--font-thai);
+    font-weight: 600;
+    font-size: 14px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .btn:hover:not(:disabled) { background: var(--surface-2); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
+  .btn-success {
+    background: var(--success);
+    color: #fff;
+    border-color: var(--success);
+  }
+  .btn-success:hover:not(:disabled) {
+    background: #2b9160;
+    border-color: #2b9160;
+  }
+  .btn svg { width: 16px; height: 16px; }
+
+  /* Progress */
+  .progress {
+    margin-top: 18px;
+    background: var(--surface-2);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    display: none;
+  }
+  .progress.show { display: block; }
+  .progress-bar-wrap {
+    height: 6px;
+    background: var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width 0.2s;
+    border-radius: 999px;
+  }
+  .progress-text {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-2);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* Summary */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 700px) {
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
+  }
+  .stat-value {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-top: 4px;
+    line-height: 1.1;
+  }
+  .stat-value .unit {
+    font-size: 12px;
+    color: var(--text-3);
+    font-weight: 500;
+    margin-left: 2px;
+  }
+  .stat.shopee { border-left: 3px solid var(--shopee); }
+  .stat.spx-rct { border-left: 3px solid var(--spx-rct); }
+  .stat.spx-tiv { border-left: 3px solid var(--spx-tiv); }
+
+  /* Table */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+  .table-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .table-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+  }
+  .table-filters {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .filter-btn {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-2);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-weight: 500;
+  }
+  .filter-btn:hover { background: var(--surface-2); }
+  .filter-btn.active {
+    background: var(--text);
+    color: #fff;
+    border-color: var(--text);
+  }
+  .table-scroll {
+    overflow-x: auto;
+    max-height: 560px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  thead {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--surface-2);
+  }
+  thead th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  tbody tr:hover { background: var(--surface-2); }
+  tbody tr:last-child td { border-bottom: none; }
+  .td-num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .td-mono {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
+  .td-amount {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    text-align: right;
+  }
+  .tag-type {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 3px 7px;
+    border-radius: 4px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .tag-type.shopee { background: var(--shopee-soft); color: var(--shopee); }
+  .tag-type.spx-rct { background: var(--spx-rct-soft); color: var(--spx-rct); }
+  .tag-type.spx-tiv { background: var(--spx-tiv-soft); color: var(--spx-tiv); }
+  .tag-err {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    padding: 2px 6px;
+    margin-left: 4px;
+    border-radius: 4px;
+    font-weight: 600;
+    background: var(--danger-soft);
+    color: var(--danger);
+    letter-spacing: 0.04em;
+  }
+  tr.row-error td { background: var(--danger-soft) !important; }
+  tr.row-error:hover td { background: #ffd9d5 !important; }
+
+  .empty-state {
+    padding: 64px 24px;
+    text-align: center;
+    color: var(--text-3);
+  }
+  .empty-state .emoji {
+    font-size: 36px;
+    margin-bottom: 10px;
+    opacity: 0.5;
+  }
+  .empty-state-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--text-2);
+    margin-bottom: 4px;
+  }
+
+  /* Toast */
+  .toast-container {
+    position: fixed;
+    top: 24px; right: 24px;
+    display: flex; flex-direction: column; gap: 8px;
+    z-index: 200;
+  }
+  .toast {
+    background: var(--text);
+    color: #fff;
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: var(--shadow-lg);
+    animation: slideIn 0.2s ease;
+    max-width: 340px;
+  }
+  .toast.success { background: var(--success); }
+  .toast.error { background: var(--danger); }
+  .toast.warn { background: var(--warn); }
+  @keyframes slideIn {
+    from { transform: translateX(20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  /* error list */
+  .errors-list {
+    margin-top: 12px;
+    background: var(--danger-soft);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: none;
+  }
+  .errors-list.show { display: block; }
+  .errors-list-title {
+    font-weight: 600;
+    color: var(--danger);
+    font-size: 13px;
+    margin-bottom: 6px;
+    font-family: var(--font-display);
+  }
+  .errors-list ul {
+    list-style: none; padding: 0; margin: 0;
+    max-height: 140px; overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .errors-list li {
+    padding: 3px 0;
+    color: var(--text-2);
+  }
+
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Footer */
+  footer {
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-3);
+    text-align: center;
+    letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+
+<nav class="topnav">
+  <div class="topnav-inner">
+    <div class="brand">
+      <div class="brand-logo">P</div>
+      <div class="brand-text">
+        <div class="brand-name">PEAK Expense Importer</div>
+        <div class="brand-sub">Lamsang · Internal Tool</div>
+      </div>
+    </div>
+    <div class="topnav-actions">
+      <span class="pill"><span class="pill-dot"></span>READY</span>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="hero">
+    <div>
+      <h1 class="hero-title">นำเข้าค่าใช้จ่าย <span class="mono">PEAK</span></h1>
+      <p class="hero-desc">อัปโหลดไฟล์ ZIP ที่มี PDF ใบเสร็จ/ใบกำกับจาก Shopee และ SPX Express ระบบจะสกัดข้อมูลอัตโนมัติและส่งออกเป็นไฟล์ Excel ตามรูปแบบ PEAK Import_Expenses</p>
+    </div>
+    <div class="steps">
+      <span>1 · UPLOAD</span>
+      <span class="chev">›</span>
+      <span>2 · PARSE</span>
+      <span class="chev">›</span>
+      <span>3 · EXPORT</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">1. อัปโหลดไฟล์ ZIP</div>
+          <div class="card-sub">ลากไฟล์ .zip ที่มี PDF ใบเสร็จ/ใบกำกับภาษีลงในช่องนี้</div>
+        </div>
+        <span class="card-badge">ZIP / PDF</span>
+      </div>
+
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept=".zip" />
+        <div class="drop-icon">
+          <svg id="drop-svg-default" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div>
+          <div class="drop-title" id="drop-title">คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่</div>
+          <div class="drop-sub" id="drop-sub">รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)</div>
+        </div>
+      </label>
+
+      <div class="progress" id="progress">
+        <div class="progress-text">
+          <span id="progress-label">กำลังประมวลผล…</span>
+          <span id="progress-count">0 / 0</span>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar"></div></div>
+      </div>
+
+      <div class="errors-list" id="errors-list">
+        <div class="errors-list-title">พบข้อผิดพลาด</div>
+        <ul id="errors-list-ul"></ul>
+      </div>
+    </div>
+
+    <!-- Config -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">2. การตั้งค่า Mapping</div>
+          <div class="card-sub">ตั้งค่าเลขที่ผู้ติดต่อ / ผังบัญชี / ช่องทางการเงิน</div>
+        </div>
+        <span class="card-badge">PEAK CONFIG</span>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">Shopee <span class="tag shopee">TIV</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-shopee-contact" value="C00005" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขทะเบียน</div>
+          <input class="config-input" id="cfg-shopee-taxid" value="105558019581" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">บัญชี</div>
+          <input class="config-input" id="cfg-shopee-account" value="530408" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">คำอธิบาย</div>
+          <input class="config-input" id="cfg-shopee-desc" value="ค่าบริการ Shopee" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">SPX Express <span class="tag spx-tiv">TIV</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-spxtiv-contact" value="C00028" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขทะเบียน</div>
+          <input class="config-input" id="cfg-spxtiv-taxid" value="105561164871" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">บัญชี</div>
+          <input class="config-input" id="cfg-spxtiv-account" value="510107" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">คำอธิบาย</div>
+          <input class="config-input" id="cfg-spxtiv-desc" value="ค่าบริการ SPX (SFS)" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">SPX Express <span class="tag spx-rct">RCT</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-spxrct-contact" value="C00028" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขทะเบียน</div>
+          <input class="config-input" id="cfg-spxrct-taxid" value="105561164871" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">บัญชี</div>
+          <input class="config-input" id="cfg-spxrct-account" value="510107" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">คำอธิบาย</div>
+          <input class="config-input" id="cfg-spxrct-desc" value="ค่าบริการขนส่ง SPX" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">ทั่วไป</div>
+        <div class="config-row">
+          <div class="config-label">ชำระโดย</div>
+          <input class="config-input" id="cfg-paymethod" value="EWL001" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขสาขา</div>
+          <input class="config-input" id="cfg-branch" value="00000" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Summary + Table -->
+  <div id="results" style="display:none;">
+    <div class="summary-grid" id="summary-grid">
+      <div class="stat">
+        <div class="stat-label">Total Rows</div>
+        <div class="stat-value" id="stat-total">0</div>
+      </div>
+      <div class="stat shopee">
+        <div class="stat-label">Shopee</div>
+        <div class="stat-value" id="stat-shopee">0</div>
+      </div>
+      <div class="stat spx-tiv">
+        <div class="stat-label">SPX · TIV</div>
+        <div class="stat-value" id="stat-spxtiv">0</div>
+      </div>
+      <div class="stat spx-rct">
+        <div class="stat-label">SPX · RCT</div>
+        <div class="stat-value" id="stat-spxrct">0</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-header">
+        <div>
+          <div class="table-title">ตัวอย่างข้อมูล</div>
+        </div>
+        <div class="table-filters" id="filters">
+          <button class="filter-btn active" data-filter="all">ทั้งหมด</button>
+          <button class="filter-btn" data-filter="Shopee-TIV">Shopee</button>
+          <button class="filter-btn" data-filter="SPX-TIV">SPX TIV</button>
+          <button class="filter-btn" data-filter="SPX-RCT">SPX RCT</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table id="preview-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Date</th>
+              <th>Type</th>
+              <th>ผู้รับเงิน</th>
+              <th>เลขที่ใบกำกับฯ</th>
+              <th>บัญชี</th>
+              <th>คำอธิบาย</th>
+              <th>อัตราภาษี</th>
+              <th style="text-align:right">ยอดที่ชำระ</th>
+            </tr>
+          </thead>
+          <tbody id="preview-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="empty" class="card" style="text-align:center; padding: 40px 24px;">
+    <div style="font-size:42px; opacity:0.3; margin-bottom:8px">📄</div>
+    <div class="empty-state-title">ยังไม่มีข้อมูล</div>
+    <div style="font-size:12.5px; color: var(--text-3);">อัปโหลดไฟล์ ZIP เพื่อเริ่มต้น</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="btn-reset" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+      เริ่มใหม่
+    </button>
+    <button class="btn btn-primary" id="btn-parse" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+      <span id="btn-parse-label">ประมวลผล</span>
+    </button>
+    <button class="btn btn-success" id="btn-export" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export Excel
+    </button>
+  </div>
+
+  <footer>
+    LAMSANG · PEAK EXPENSE IMPORTER · v1.0 · made with care in SUKHOTHAI
+  </footer>
+</main>
+
+<div class="toast-container" id="toasts"></div>
+
+<script>
+  /* =================================================================
+     PDF.js worker — v3.11.174 exposes global `pdfjsLib`
+  ================================================================= */
+  if (typeof pdfjsLib === 'undefined') {
+    alert('โหลด pdf.js ไม่สำเร็จ — กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
+  } else {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  /* =================================================================
+     State
+  ================================================================= */
+  const state = {
+    zipFile: null,
+    pdfs: [],       // { name, type, buffer }
+    rows: [],       // parsed rows
+    errors: [],     // parse errors
+    currentFilter: 'all'
+  };
+
+  /* =================================================================
+     Toast
+  ================================================================= */
+  function toast(msg, kind = '') {
+    const wrap = document.getElementById('toasts');
+    const el = document.createElement('div');
+    el.className = 'toast ' + kind;
+    el.textContent = msg;
+    wrap.appendChild(el);
+    setTimeout(() => el.remove(), 3200);
+  }
+
+  /* =================================================================
+     DOM refs
+  ================================================================= */
+  const $ = id => document.getElementById(id);
+  const dz = $('dropzone');
+  const fileInput = $('fileInput');
+  const btnParse = $('btn-parse');
+  const btnExport = $('btn-export');
+  const btnReset = $('btn-reset');
+  const progress = $('progress');
+  const progressBar = $('progress-bar');
+  const progressLabel = $('progress-label');
+  const progressCount = $('progress-count');
+
+  /* =================================================================
+     Dropzone
+  ================================================================= */
+  ['dragenter','dragover'].forEach(ev =>
+    dz.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation();
+      dz.classList.add('active');
+    })
+  );
+  ['dragleave','drop'].forEach(ev =>
+    dz.addEventListener(ev, e => {
+      e.preventDefault(); e.stopPropagation();
+      dz.classList.remove('active');
+    })
+  );
+  dz.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+  fileInput.addEventListener('change', e => {
+    if (e.target.files[0]) handleFile(e.target.files[0]);
+  });
+
+  function handleFile(file) {
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      toast('ต้องเป็นไฟล์ .zip เท่านั้น', 'error');
+      return;
+    }
+    state.zipFile = file;
+    dz.classList.add('has-file');
+    $('drop-title').textContent = file.name;
+    $('drop-sub').textContent = `${(file.size / 1024 / 1024).toFixed(2)} MB · พร้อมประมวลผล`;
+    btnParse.disabled = false;
+    btnReset.disabled = false;
+  }
+
+  /* =================================================================
+     Filename pattern detection
+     Examples:
+       Shopee-TIV-TRSPEMKP00-00000-260329-0000772.pdf
+       SPX Express-TIV-TRSPXADB00-00000-260329-0001650.pdf
+       SPX Express-RCT-RCSPXSPB00-00000-260329-0024955.pdf
+  ================================================================= */
+  function detectType(fname) {
+    if (fname.startsWith('Shopee-TIV')) return 'Shopee-TIV';
+    if (fname.startsWith('SPX Express-TIV')) return 'SPX-TIV';
+    if (fname.startsWith('SPX Express-RCT')) return 'SPX-RCT';
+    return null;
+  }
+
+  /* =================================================================
+     Parse ZIP -> PDFs
+  ================================================================= */
+  btnParse.addEventListener('click', async () => {
+    if (!state.zipFile) return;
+    btnParse.disabled = true;
+    btnReset.disabled = true;
+    btnExport.disabled = true;
+    state.pdfs = [];
+    state.rows = [];
+    state.errors = [];
+    $('errors-list').classList.remove('show');
+    progress.classList.add('show');
+
+    try {
+      progressLabel.textContent = 'กำลังแตกไฟล์ ZIP…';
+      progressBar.style.width = '5%';
+      progressCount.textContent = '0 / ?';
+
+      const zip = await JSZip.loadAsync(state.zipFile);
+      const pdfFiles = [];
+      zip.forEach((path, file) => {
+        if (file.dir) return;
+        if (!path.toLowerCase().endsWith('.pdf')) return;
+        // take base name (strip any folder)
+        const base = path.split('/').pop();
+        pdfFiles.push({ path, base, file });
+      });
+
+      if (pdfFiles.length === 0) {
+        toast('ไม่พบไฟล์ PDF ใน ZIP', 'error');
+        resetProgress();
+        btnParse.disabled = false;
+        btnReset.disabled = false;
+        return;
+      }
+
+      progressCount.textContent = `0 / ${pdfFiles.length}`;
+      progressLabel.textContent = 'กำลังอ่าน PDF…';
+
+      // Process PDFs one by one
+      for (let i = 0; i < pdfFiles.length; i++) {
+        const { base, file } = pdfFiles[i];
+        const type = detectType(base);
+
+        if (!type) {
+          state.errors.push(`${base} · ไม่รู้จักประเภท (ไม่ได้ขึ้นต้นด้วย Shopee-TIV / SPX Express-TIV / SPX Express-RCT)`);
+        } else {
+          try {
+            const buffer = await file.async('arraybuffer');
+            const row = await parsePdf(buffer, base, type);
+            if (row) state.rows.push(row);
+          } catch (err) {
+            console.error('parse error', base, err);
+            state.errors.push(`${base} · ${err.message || err}`);
+            // Per user requirement: include failed PDFs as rows with amount=0
+            const fallback = buildFallbackRow(base, type);
+            if (fallback) state.rows.push(fallback);
+          }
+        }
+
+        const pct = 5 + Math.round(90 * (i + 1) / pdfFiles.length);
+        progressBar.style.width = pct + '%';
+        progressCount.textContent = `${i + 1} / ${pdfFiles.length}`;
+      }
+
+      // Sort rows: group by type (Shopee first, SPX-TIV, SPX-RCT) then by date
+      state.rows.sort((a, b) => {
+        const order = { 'Shopee-TIV': 1, 'SPX-TIV': 2, 'SPX-RCT': 3 };
+        const t = (order[a._type] || 9) - (order[b._type] || 9);
+        if (t !== 0) return t;
+        return a.docDate.localeCompare(b.docDate);
+      });
+      // Assign sequence numbers (ลำดับที่) — incrementing from 1 across all rows
+      state.rows.forEach((r, i) => r.seq = i + 1);
+
+      progressBar.style.width = '100%';
+      progressLabel.textContent = 'เสร็จสิ้น';
+
+      setTimeout(() => {
+        progress.classList.remove('show');
+        progressBar.style.width = '0%';
+      }, 600);
+
+      renderResults();
+
+      if (state.errors.length > 0) {
+        const ul = $('errors-list-ul');
+        ul.innerHTML = '';
+        state.errors.forEach(e => {
+          const li = document.createElement('li');
+          li.textContent = e;
+          ul.appendChild(li);
+        });
+        $('errors-list').classList.add('show');
+        toast(`ประมวลผลสำเร็จ · ${state.rows.length} รายการ · มีข้อผิดพลาด ${state.errors.length}`, 'warn');
+      } else {
+        toast(`ประมวลผลสำเร็จ · ${state.rows.length} รายการ`, 'success');
+      }
+
+      btnParse.disabled = false;
+      btnReset.disabled = false;
+      btnExport.disabled = state.rows.length === 0;
+    } catch (err) {
+      console.error(err);
+      toast('เกิดข้อผิดพลาด: ' + err.message, 'error');
+      resetProgress();
+      btnParse.disabled = false;
+      btnReset.disabled = false;
+    }
+  });
+
+  function resetProgress() {
+    progress.classList.remove('show');
+    progressBar.style.width = '0%';
+  }
+
+  /* =================================================================
+     Fallback row for broken/unreadable PDFs (amount = 0)
+     Try to salvage date + invoice number from filename
+  ================================================================= */
+  function buildFallbackRow(fname, type) {
+    // filename format: <prefix>-<TIV|RCT>-<CODE>-<BRANCH>-<YYMMDD>-<RUN>.pdf
+    const mInv = fname.match(/^(Shopee|SPX Express)-(TIV|RCT)-(.+)\.pdf$/i);
+    let invPart = null;
+    let invNumber = null;
+    if (mInv) {
+      invPart = mInv[3];
+      invNumber = `${mInv[2]}-${invPart}`;
+    }
+    let docDate = null;
+    const mFname = fname.match(/-00000-(\d{2})(\d{2})(\d{2})-/);
+    if (mFname) docDate = `20${mFname[1]}${mFname[2]}${mFname[3]}`;
+    if (!docDate) return null; // Can't salvage anything useful
+
+    const cfg = getConfigForType(type);
+    return {
+      _type: type,
+      _fname: fname,
+      _error: true,
+      docDate,
+      refTo: '',
+      contact: cfg.contact,
+      taxId: cfg.taxId,
+      branch: getGlobalConfig().branch,
+      invoiceNo: type === 'SPX-RCT' ? '' : invNumber,
+      invoiceDate: type === 'SPX-RCT' ? '' : docDate,
+      taxRecordDate: type === 'SPX-RCT' ? '' : docDate,
+      priceType: type === 'SPX-RCT' ? 3 : 2,
+      account: cfg.account,
+      description: cfg.description,
+      qty: 1,
+      unitPrice: 0,
+      vatRate: type === 'SPX-RCT' ? 'NO' : 0.07,
+      wht: 0,
+      payMethod: getGlobalConfig().payMethod,
+      paidAmount: 0,
+      pgd: '',
+      note: '(ไฟล์อ่านไม่ได้)',
+      category: ''
+    };
+  }
+
+  /* =================================================================
+     Parse single PDF -> row object
+  ================================================================= */
+  async function parsePdf(buffer, fname, type) {
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    let fullText = '';
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      // Join items with proper spacing — pdf.js items are in reading order
+      const pageText = content.items.map(it => it.str).join(' ');
+      fullText += pageText + '\n';
+    }
+
+    // Extract date (DD/MM/YYYY)
+    const mDate = fullText.match(/Date\s+(\d{2})\/(\d{2})\/(\d{4})/);
+    let docDate = null;
+    if (mDate) {
+      docDate = `${mDate[3]}${mDate[2]}${mDate[1]}`; // YYYYMMDD
+    } else {
+      // try to get from filename (YYMMDD after -00000-)
+      const mFname = fname.match(/-00000-(\d{2})(\d{2})(\d{2})-/);
+      if (mFname) {
+        // YY prefix -> assume 20YY (filenames use BE or CE? in samples they match file YY+MMDD with CE date, eg. 260329 -> 2026/03/29)
+        docDate = `20${mFname[1]}${mFname[2]}${mFname[3]}`;
+      }
+    }
+    if (!docDate) throw new Error('หา Date ไม่เจอ');
+
+    // Extract invoice number from filename reliably: strip prefix and ".pdf"
+    // e.g. Shopee-TIV-TRSPEMKP00-00000-260329-0000772.pdf
+    //   -> TRSPEMKP00-00000-260329-0000772
+    //   -> อ้างอิง: "TIV-TRSPEMKP00-00000-260329-0000772" (as in sample Excel)
+    // RCT files don't have invoice number in Excel (blank)
+    let invNumber = null;
+    let invPart = null;
+    const mInv = fname.match(/^(Shopee|SPX Express)-(TIV|RCT)-(.+)\.pdf$/i);
+    if (mInv) {
+      invPart = mInv[3]; // e.g. TRSPEMKP00-00000-260329-0000772
+      invNumber = `${mInv[2]}-${invPart}`;
+    }
+
+    // Extract total amount
+    // For TIV (with VAT): look for "Total Value of Services (Included VAT)" value
+    // For RCT (no VAT): look for "จำนวนเงินรวม/ Total amount" value
+    let total = null;
+    if (type === 'Shopee-TIV' || type === 'SPX-TIV') {
+      const m = fullText.match(/Total Value of Services \(Included VAT\)\s*([\d,]+\.\d+)/);
+      if (m) total = parseFloat(m[1].replace(/,/g, ''));
+    } else if (type === 'SPX-RCT') {
+      const m = fullText.match(/Total amount\s*([\d,]+\.\d+)/);
+      if (m) total = parseFloat(m[1].replace(/,/g, ''));
+    }
+
+    if (total === null || isNaN(total)) {
+      throw new Error('อ่านยอดเงินไม่ได้');
+    }
+
+    // Get config based on type
+    const cfg = getConfigForType(type);
+    // Build row
+    const row = {
+      _type: type,
+      _fname: fname,
+      docDate,               // B วันที่เอกสาร (YYYYMMDD)
+      refTo: '',             // C อ้างอิงถึง (blank by default)
+      contact: cfg.contact,  // D ผู้รับเงิน
+      taxId: cfg.taxId,      // E เลขทะเบียน 13 หลัก
+      branch: getGlobalConfig().branch,   // F เลขสาขา
+      invoiceNo: type === 'SPX-RCT' ? '' : invNumber, // G เลขที่ใบกำกับฯ
+      invoiceDate: type === 'SPX-RCT' ? '' : docDate, // H วันที่ใบกำกับฯ
+      taxRecordDate: type === 'SPX-RCT' ? '' : docDate, // I วันที่บันทึกภาษีซื้อ
+      priceType: type === 'SPX-RCT' ? 3 : 2, // J 2=รวมภาษี, 3=ไม่มีภาษี
+      account: cfg.account,  // K บัญชี
+      description: cfg.description, // L
+      qty: 1,                // M
+      unitPrice: total,      // N (ยอดรวม → ใช้ priceType=2 รวมภาษี)
+      vatRate: type === 'SPX-RCT' ? 'NO' : 0.07, // O
+      wht: 0,                // P หัก ณ ที่จ่าย
+      payMethod: getGlobalConfig().payMethod, // Q ชำระโดย
+      paidAmount: total,     // R จำนวนเงินที่ชำระ
+      pgd: '',               // S ภ.ง.ด.
+      note: '',              // T หมายเหตุ
+      category: ''           // U กลุ่มจัดประเภท
+    };
+    return row;
+  }
+
+  /* =================================================================
+     Config helpers
+  ================================================================= */
+  function getConfigForType(type) {
+    if (type === 'Shopee-TIV') {
+      return {
+        contact: $('cfg-shopee-contact').value.trim(),
+        taxId: $('cfg-shopee-taxid').value.trim(),
+        account: $('cfg-shopee-account').value.trim(),
+        description: $('cfg-shopee-desc').value.trim(),
+      };
+    }
+    if (type === 'SPX-TIV') {
+      return {
+        contact: $('cfg-spxtiv-contact').value.trim(),
+        taxId: $('cfg-spxtiv-taxid').value.trim(),
+        account: $('cfg-spxtiv-account').value.trim(),
+        description: $('cfg-spxtiv-desc').value.trim(),
+      };
+    }
+    if (type === 'SPX-RCT') {
+      return {
+        contact: $('cfg-spxrct-contact').value.trim(),
+        taxId: $('cfg-spxrct-taxid').value.trim(),
+        account: $('cfg-spxrct-account').value.trim(),
+        description: $('cfg-spxrct-desc').value.trim(),
+      };
+    }
+    return {};
+  }
+  function getGlobalConfig() {
+    return {
+      payMethod: $('cfg-paymethod').value.trim(),
+      branch: $('cfg-branch').value.trim() || '00000',
+    };
+  }
+
+  /* =================================================================
+     Render results
+  ================================================================= */
+  function renderResults() {
+    $('empty').style.display = 'none';
+    $('results').style.display = 'block';
+
+    // Stats
+    const counts = { total: state.rows.length, shopee: 0, spxtiv: 0, spxrct: 0 };
+    state.rows.forEach(r => {
+      if (r._type === 'Shopee-TIV') counts.shopee++;
+      else if (r._type === 'SPX-TIV') counts.spxtiv++;
+      else if (r._type === 'SPX-RCT') counts.spxrct++;
+    });
+    $('stat-total').innerHTML = counts.total + '<span class="unit"> rows</span>';
+    $('stat-shopee').innerHTML = counts.shopee;
+    $('stat-spxtiv').innerHTML = counts.spxtiv;
+    $('stat-spxrct').innerHTML = counts.spxrct;
+
+    // Table
+    renderTable();
+  }
+
+  function renderTable() {
+    const tbody = $('preview-body');
+    tbody.innerHTML = '';
+    const filtered = state.currentFilter === 'all'
+      ? state.rows
+      : state.rows.filter(r => r._type === state.currentFilter);
+
+    if (filtered.length === 0) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="9" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td>`;
+      tbody.appendChild(tr);
+      return;
+    }
+
+    const typeTag = {
+      'Shopee-TIV': '<span class="tag-type shopee">SHOPEE</span>',
+      'SPX-TIV': '<span class="tag-type spx-tiv">SPX·TIV</span>',
+      'SPX-RCT': '<span class="tag-type spx-rct">SPX·RCT</span>',
+    };
+
+    filtered.forEach(r => {
+      const tr = document.createElement('tr');
+      if (r._error) tr.classList.add('row-error');
+      const dateFormatted = `${r.docDate.slice(0,4)}-${r.docDate.slice(4,6)}-${r.docDate.slice(6,8)}`;
+      const errBadge = r._error ? '<span class="tag-err">ERR</span>' : '';
+      tr.innerHTML = `
+        <td class="td-num">${r.seq}</td>
+        <td class="td-mono">${dateFormatted}</td>
+        <td>${typeTag[r._type] || ''}${errBadge}</td>
+        <td class="td-mono">${r.contact}</td>
+        <td class="td-mono">${r.invoiceNo || '—'}</td>
+        <td class="td-mono">${r.account}</td>
+        <td>${r.description}</td>
+        <td class="td-mono">${r.vatRate === 'NO' ? 'NO' : (r.vatRate * 100).toFixed(0) + '%'}</td>
+        <td class="td-amount">${r.paidAmount.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // filter buttons
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.currentFilter = btn.dataset.filter;
+      renderTable();
+    });
+  });
+
+  /* =================================================================
+     Export Excel
+  ================================================================= */
+  btnExport.addEventListener('click', () => {
+    if (state.rows.length === 0) {
+      toast('ไม่มีข้อมูลสำหรับ export', 'warn');
+      return;
+    }
+
+    try {
+      const headers = [
+        'ลำดับที่*', 'วันที่เอกสาร', 'อ้างอิงถึง', 'ผู้รับเงิน/คู่ค้า',
+        'เลขทะเบียน 13 หลัก', 'เลขสาขา 5 หลัก', 'เลขที่ใบกำกับฯ (ถ้ามี)',
+        'วันที่ใบกำกับฯ (ถ้ามี)', 'วันที่บันทึกภาษีซื้อ (ถ้ามี)', 'ประเภทราคา',
+        'บัญชี', 'คำอธิบาย', 'จำนวน', 'ราคาต่อหน่วย', 'อัตราภาษี',
+        'หัก ณ ที่จ่าย (ถ้ามี)', 'ชำระโดย', 'จำนวนเงินที่ชำระ',
+        'ภ.ง.ด. (ถ้ามี)', 'หมายเหตุ', 'กลุ่มจัดประเภท'
+      ];
+
+      const data = [headers];
+      state.rows.forEach(r => {
+        data.push([
+          r.seq,
+          Number(r.docDate),
+          r.refTo || '',
+          r.contact,
+          r.taxId,
+          r.branch,
+          r.invoiceNo || '',
+          r.invoiceDate ? Number(r.invoiceDate) : '',
+          r.taxRecordDate ? Number(r.taxRecordDate) : '',
+          r.priceType,
+          r.account,
+          r.description,
+          r.qty,
+          r.unitPrice,
+          r.vatRate,
+          r.wht,
+          r.payMethod,
+          r.paidAmount,
+          r.pgd || '',
+          r.note || '',
+          r.category || ''
+        ]);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(data);
+
+      // Column widths
+      ws['!cols'] = [
+        {wch: 9}, {wch: 13}, {wch: 14}, {wch: 16}, {wch: 18}, {wch: 14},
+        {wch: 38}, {wch: 20}, {wch: 20}, {wch: 11}, {wch: 8}, {wch: 22},
+        {wch: 7}, {wch: 13}, {wch: 10}, {wch: 18}, {wch: 10}, {wch: 17},
+        {wch: 13}, {wch: 10}, {wch: 14}
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Import_Expenses');
+
+      // Filename: PEAK_Expense_YYYYMMDD.xlsx
+      const today = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const stamp = `${today.getFullYear()}${pad(today.getMonth()+1)}${pad(today.getDate())}_${pad(today.getHours())}${pad(today.getMinutes())}`;
+      const filename = `PEAK_ImportExpense_${stamp}.xlsx`;
+
+      XLSX.writeFile(wb, filename);
+      toast(`Export สำเร็จ · ${state.rows.length} รายการ`, 'success');
+    } catch (err) {
+      console.error(err);
+      toast('Export ล้มเหลว: ' + err.message, 'error');
+    }
+  });
+
+  /* =================================================================
+     Reset
+  ================================================================= */
+  btnReset.addEventListener('click', () => {
+    state.zipFile = null;
+    state.pdfs = [];
+    state.rows = [];
+    state.errors = [];
+    state.currentFilter = 'all';
+    fileInput.value = '';
+    dz.classList.remove('has-file');
+    $('drop-title').textContent = 'คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่';
+    $('drop-sub').textContent = 'รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)';
+    btnParse.disabled = true;
+    btnExport.disabled = true;
+    btnReset.disabled = true;
+    $('results').style.display = 'none';
+    $('empty').style.display = 'block';
+    $('errors-list').classList.remove('show');
+    document.querySelectorAll('.filter-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.filter === 'all');
+    });
+    toast('รีเซ็ตเรียบร้อย');
+  });
+</script>
+</body>
+</html>
