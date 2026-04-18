@@ -2199,6 +2199,4057 @@
 </div>
 
 <footer>
+  LAMSANG · PEAK EXPENSE IMPORTER · v4.6 · made with care in SUKHOTHAI
+</footer>
+
+</main>
+
+<div class="toast-container" id="toasts"></div>
+
+<script>
+  /* ================================================================
+     PDF.js worker
+  ================================================================ */
+  if (typeof pdfjsLib === 'undefined') {
+    alert('โหลด pdf.js ไม่สำเร็จ — กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต');
+  } else {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  /* ================================================================
+     Shared: extract line items from PDF text into a note string
+     Supports 3 formats:
+     1. Shopee/SPX: numbered rows "N Name 1 unit.dd amount.dd"
+     2. Tax invoice: "- Name ฿xxx ฿xxx ฿xxx" (3 amounts: excl/vat/incl, use last)
+     3. Simple receipt: "- Name / ฿xxx"
+     Multiple items separated by newline.
+  ================================================================ */
+  // Apply wrap-text to the note column (T = index 19, 0-based) of an Excel worksheet,
+  // so newlines inside cells render as actual line breaks.
+  function applyNoteWrapText(ws, rowCount) {
+    for (let r = 1; r <= rowCount; r++) {
+      const addr = XLSX.utils.encode_cell({ r, c: 19 });  // column T
+      const cell = ws[addr];
+      if (!cell) continue;
+      cell.s = cell.s || {};
+      cell.s.alignment = { wrapText: true, vertical: 'top' };
+    }
+  }
+
+  function extractLineItemsNote(fullText) {
+    // Attempt format 1: numbered rows — needs rebuilding line-by-line
+    // Since pdf.js flattens with spaces, we rely on full text in order.
+    // Pattern allows for name containing mixed words until we see "N num.dd num.dd"
+    const items = [];
+
+    // Format 2 & 3 are line-based with "- " prefix
+    // Work on the flat text by splitting on common delimiters to form "lines"
+    // pdf.js concatenates items with spaces within a line; newlines come from page.extract
+    const lines = fullText.split('\n');
+    for (const raw of lines) {
+      const line = raw.trim();
+      // Format 2: "- Name ฿xxx ฿xxx ฿xxx"
+      let m = line.match(/^-\s*(.+?)\s+฿([\d,]+\.\d+)\s+฿([\d,]+\.\d+)\s+฿([\d,]+\.\d+)\s*$/);
+      if (m) {
+        items.push({ desc: m[1].trim(), amt: m[4] });
+        continue;
+      }
+      // Format 3: "- Name / ฿xxx"
+      m = line.match(/^-\s*(.+?)\s*\/\s*฿([\d,]+\.\d+)\s*$/);
+      if (m) {
+        items.push({ desc: m[1].trim(), amt: m[2] });
+        continue;
+      }
+      // Format 1: "N Name N unit amt" (Shopee/SPX)
+      m = line.match(/^(\d+)\s+(.+?)\s+(\d+)\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s*$/);
+      if (m) {
+        items.push({ desc: m[2].trim(), amt: m[5] });
+        continue;
+      }
+    }
+
+    if (items.length === 0) return '';
+    const note = items.map(it => `${it.desc} ${it.amt}`).join('\n');
+    // PEAK note limit is 500 chars — truncate if necessary
+    if (note.length > 500) return note.slice(0, 497) + '...';
+    return note;
+  }
+
+  const $ = id => document.getElementById(id);
+
+  /* ================================================================
+     Custom cursor follow
+  ================================================================ */
+  (function initCursor() {
+    if (window.matchMedia('(pointer: coarse)').matches) return;
+    const dot = $('cursor-dot');
+    const ring = $('cursor-ring');
+    if (!dot || !ring) return;
+
+    let mx = 0, my = 0;
+    let rx = 0, ry = 0;
+    document.addEventListener('mousemove', e => {
+      mx = e.clientX; my = e.clientY;
+      dot.style.left = mx + 'px';
+      dot.style.top = my + 'px';
+    });
+    function animRing() {
+      rx += (mx - rx) * 0.18;
+      ry += (my - ry) * 0.18;
+      ring.style.left = rx + 'px';
+      ring.style.top = ry + 'px';
+      requestAnimationFrame(animRing);
+    }
+    animRing();
+
+    // Hover detection on interactive elements
+    const hoverSelectors = 'a, button, .btn, .tab-btn, .filter-btn, .dropzone, .card, .stat, .pill, input, select, .brand-logo, .method-map-del, .method-add-btn';
+    document.addEventListener('mouseover', e => {
+      if (e.target.closest(hoverSelectors)) ring.classList.add('hover');
+    });
+    document.addEventListener('mouseout', e => {
+      if (e.target.closest(hoverSelectors)) ring.classList.remove('hover');
+    });
+    // Click pulse
+    document.addEventListener('mousedown', () => {
+      ring.classList.add('click');
+    });
+    document.addEventListener('mouseup', () => {
+      setTimeout(() => ring.classList.remove('click'), 120);
+    });
+  })();
+
+  /* ================================================================
+     Ripple click effect (any clickable)
+  ================================================================ */
+  document.addEventListener('click', e => {
+    const t = e.target.closest('.btn, .filter-btn, .tab-btn');
+    if (!t) return;
+    const rect = t.getBoundingClientRect();
+    const ripple = document.createElement('span');
+    ripple.style.cssText = `
+      position: absolute;
+      left: ${e.clientX - rect.left}px;
+      top: ${e.clientY - rect.top}px;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.55);
+      transform: translate(-50%, -50%) scale(0);
+      animation: rippleExpand 0.6s ease-out forwards;
+      pointer-events: none;
+      z-index: 10;
+    `;
+    // Darker ripple for light-bg buttons
+    if (!t.classList.contains('btn-primary') && !t.classList.contains('btn-success') && !t.classList.contains('active')) {
+      ripple.style.background = 'rgba(0, 113, 227, 0.2)';
+    }
+    t.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 650);
+  });
+  // Inject ripple keyframe once
+  (function injectRippleKeyframe() {
+    const st = document.createElement('style');
+    st.textContent = `@keyframes rippleExpand {
+      to {
+        width: 400px; height: 400px;
+        opacity: 0;
+      }
+    }`;
+    document.head.appendChild(st);
+  })();
+
+  /* ================================================================
+     Toast with dismiss animation
+  ================================================================ */
+  function toast(msg, kind = '') {
+    const wrap = $('toasts');
+    const el = document.createElement('div');
+    el.className = 'toast ' + kind;
+    el.textContent = msg;
+    wrap.appendChild(el);
+    setTimeout(() => {
+      el.classList.add('toast-out');
+      setTimeout(() => el.remove(), 300);
+    }, 3000);
+  }
+
+  /* ================================================================
+     Count-up animation helper
+  ================================================================ */
+  function animateValue(el, from, to, duration = 600, formatter) {
+    if (!el) return;
+    const start = performance.now();
+    const ease = t => 1 - Math.pow(1 - t, 3);
+    function tick(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const val = from + (to - from) * ease(t);
+      el.textContent = formatter ? formatter(val) : Math.round(val).toLocaleString();
+      if (t < 1) requestAnimationFrame(tick);
+      else el.textContent = formatter ? formatter(to) : Math.round(to).toLocaleString();
+    }
+    requestAnimationFrame(tick);
+  }
+
+  /* ================================================================
+     Setter helpers — animate stats when rendering results
+  ================================================================ */
+  function setStatNumber(el, to, opts = {}) {
+    if (!el) return;
+    const prev = parseFloat(String(el.textContent).replace(/,/g, '')) || 0;
+    const fmt = opts.fmt || (v => Math.round(v).toLocaleString());
+    const unitHtml = opts.unit || '';
+    const wrapHtml = unitHtml ? (v => fmt(v) + unitHtml) : fmt;
+    el.classList.remove('stat-value-updating');
+    void el.offsetWidth;
+    el.classList.add('stat-value-updating');
+    const start = performance.now();
+    const duration = opts.duration || 600;
+    const ease = t => 1 - Math.pow(1 - t, 3);
+    function tick(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const v = prev + (to - prev) * ease(t);
+      el.innerHTML = wrapHtml(v);
+      if (t < 1) requestAnimationFrame(tick);
+      else el.innerHTML = wrapHtml(to);
+    }
+    requestAnimationFrame(tick);
+  }
+  function formatMoney(v) {
+    return v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  /* ================================================================
+     Confetti (export success)
+  ================================================================ */
+  function confettiBurst() {
+    const colors = ['#0071e3', '#30a46c', '#ee4d2d', '#8b5cf6', '#fe2c55', '#f59e0b', '#25f4ee'];
+    const n = 36;
+    const layer = document.createElement('div');
+    layer.style.cssText = `
+      position: fixed; inset: 0;
+      pointer-events: none; z-index: 9997;
+      overflow: hidden;
+    `;
+    document.body.appendChild(layer);
+    for (let i = 0; i < n; i++) {
+      const el = document.createElement('div');
+      const c = colors[i % colors.length];
+      const angle = (Math.PI * 2 * i) / n + (Math.random() - 0.5) * 0.4;
+      const dist = 140 + Math.random() * 220;
+      const dx = Math.cos(angle) * dist;
+      const dy = Math.sin(angle) * dist + 80; // bias downward
+      const rot = (Math.random() - 0.5) * 720;
+      const size = 6 + Math.random() * 6;
+      el.style.cssText = `
+        position: absolute;
+        left: 50%; top: 35%;
+        width: ${size}px; height: ${size * 0.4}px;
+        background: ${c};
+        border-radius: 1px;
+        transform: translate(-50%, -50%) rotate(${Math.random() * 360}deg);
+        opacity: 1;
+        transition: transform 1.2s cubic-bezier(0.15, 0.8, 0.3, 1), opacity 1.2s ease-out;
+      `;
+      layer.appendChild(el);
+      requestAnimationFrame(() => {
+        el.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) rotate(${rot}deg)`;
+        el.style.opacity = '0';
+      });
+    }
+    setTimeout(() => layer.remove(), 1400);
+  }
+
+  /* ================================================================
+     Tabs + animated indicator
+  ================================================================ */
+  const tabIndicator = $('tab-indicator');
+  function moveIndicator(btn) {
+    if (!btn || !tabIndicator) return;
+    const parent = btn.offsetParent;
+    if (!parent) return;
+    tabIndicator.style.left = btn.offsetLeft + 'px';
+    tabIndicator.style.width = btn.offsetWidth + 'px';
+  }
+  // Initial position
+  requestAnimationFrame(() => {
+    const active = document.querySelector('.tab-btn.active');
+    if (active) moveIndicator(active);
+  });
+  // Update on resize
+  window.addEventListener('resize', () => {
+    const active = document.querySelector('.tab-btn.active');
+    if (active) moveIndicator(active);
+  });
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      const paneId = 'tab-' + btn.dataset.tab;
+      const pane = $(paneId);
+      if (pane) {
+        // Force replay of fade-in animation
+        pane.classList.remove('active');
+        void pane.offsetWidth;
+        pane.classList.add('active');
+      }
+      moveIndicator(btn);
+    });
+  });
+
+  /* ====================================================================================
+     ==============  TAB 1: SHOPEE & SPX EXPRESS (ZIP/PDF) ============================
+  ==================================================================================== */
+
+  const pdfState = {
+    zipFile: null,
+    rows: [],
+    errors: [],
+    currentFilter: 'all'
+  };
+
+  function detectPdfType(f) {
+    if (f.startsWith('Shopee-TIV')) return 'Shopee-TIV';
+    if (f.startsWith('SPX Express-TIV')) return 'SPX-TIV';
+    if (f.startsWith('SPX Express-RCT')) return 'SPX-RCT';
+    return null;
+  }
+
+  // Vendor config — contact + tax ID by vendor (from filename prefix)
+  function getVendorConfig(type) {
+    if (type === 'Shopee-TIV') return {
+      contact: $('cfg-shopee-contact').value.trim(),
+      taxId: $('cfg-shopee-taxid').value.trim(),
+    };
+    // Both SPX-TIV and SPX-RCT use the same SPX contact
+    return {
+      contact: $('cfg-spx-contact').value.trim(),
+      taxId: $('cfg-spx-taxid').value.trim(),
+    };
+  }
+  // Fee-type config — account + description by VAT presence
+  function getFeeConfig(hasVat) {
+    if (hasVat) return {
+      account: $('cfg-service-account').value.trim(),
+      desc: $('cfg-service-desc').value.trim(),
+    };
+    return {
+      account: $('cfg-shipping-account').value.trim(),
+      desc: $('cfg-shipping-desc').value.trim(),
+    };
+  }
+  function getPdfGlobalConfig() {
+    return {
+      payMethod: $('cfg-paymethod-pdf').value.trim(),
+      branch: $('cfg-branch-pdf').value.trim() || '00000'
+    };
+  }
+
+  // Dropzone
+  const dzPdf = $('dropzone-pdf');
+  const fiPdf = $('fileInput-pdf');
+  ['dragenter','dragover'].forEach(ev => dzPdf.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzPdf.classList.add('active');
+  }));
+  ['dragleave','drop'].forEach(ev => dzPdf.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzPdf.classList.remove('active');
+  }));
+  dzPdf.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if (file) handlePdfFile(file);
+  });
+  fiPdf.addEventListener('change', e => {
+    if (e.target.files[0]) handlePdfFile(e.target.files[0]);
+  });
+
+  function handlePdfFile(file) {
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      toast('ต้องเป็นไฟล์ .zip เท่านั้น', 'error'); return;
+    }
+    pdfState.zipFile = file;
+    dzPdf.classList.add('has-file');
+    $('drop-title-pdf').textContent = file.name;
+    $('drop-sub-pdf').textContent = `${(file.size/1024/1024).toFixed(2)} MB · พร้อมประมวลผล`;
+    $('btn-parse-pdf').disabled = false;
+    $('btn-reset-pdf').disabled = false;
+  }
+
+  function buildPdfFallback(fname, type) {
+    const mInv = fname.match(/^(Shopee|SPX Express)-(TIV|RCT)-(.+)\.pdf$/i);
+    let invPart = null, invNumber = null;
+    if (mInv) {
+      invPart = mInv[3];
+      invNumber = `${mInv[2]}-${invPart}`;
+    }
+    let docDate = null;
+    const mF = fname.match(/-00000-(\d{2})(\d{2})(\d{2})-/);
+    if (mF) docDate = `20${mF[1]}${mF[2]}${mF[3]}`;
+    if (!docDate) return null;
+    const vendor = getVendorConfig(type);
+    const hasVatGuess = (type === 'Shopee-TIV' || type === 'SPX-TIV');
+    const fee = getFeeConfig(hasVatGuess);
+    const g = getPdfGlobalConfig();
+    const refFromFile = fname.replace(/\.pdf$/i, '');
+    return {
+      _type: type, _fname: fname, _error: true,
+      _hasVat: hasVatGuess,
+      docDate, refTo: refFromFile,
+      contact: vendor.contact, taxId: vendor.taxId, branch: g.branch,
+      invoiceNo: hasVatGuess ? invNumber : '',
+      invoiceDate: hasVatGuess ? docDate : '',
+      taxRecordDate: hasVatGuess ? docDate : '',
+      priceType: hasVatGuess ? 2 : 3,
+      account: fee.account, description: fee.desc,
+      qty: 1, unitPrice: 0,
+      vatRate: hasVatGuess ? 0.07 : 'NO',
+      wht: 0, payMethod: g.payMethod, paidAmount: 0,
+      pgd: '', note: '(ไฟล์อ่านไม่ได้)', category: '', seq: 0
+    };
+  }
+
+  async function parsePdf(buffer, fname, type) {
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    let fullText = '';
+    let lineText = '';  // text with newlines preserved from item.hasEOL
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      // Flat text (for global matches that span "lines")
+      fullText += content.items.map(it => it.str).join(' ') + '\n';
+      // Line-preserved text: insert \n at positions where pdf.js marked end of line
+      for (const it of content.items) {
+        lineText += it.str;
+        if (it.hasEOL) lineText += '\n';
+        else lineText += ' ';
+      }
+      lineText += '\n';
+    }
+    const mDate = fullText.match(/Date\s+(\d{2})\/(\d{2})\/(\d{4})/);
+    let docDate = null;
+    if (mDate) docDate = `${mDate[3]}${mDate[2]}${mDate[1]}`;
+    else {
+      const mF = fname.match(/-00000-(\d{2})(\d{2})(\d{2})-/);
+      if (mF) docDate = `20${mF[1]}${mF[2]}${mF[3]}`;
+    }
+    if (!docDate) throw new Error('หา Date ไม่เจอ');
+
+    let invNumber = null;
+    const mInv = fname.match(/^(Shopee|SPX Express)-(TIV|RCT)-(.+)\.pdf$/i);
+    if (mInv) invNumber = `${mInv[2]}-${mInv[3]}`;
+
+    // Determine whether this PDF represents a service (with VAT) or shipping (no VAT)
+    // — by looking at the document contents, not the filename prefix.
+    // PDFs with a VAT section contain "Total Value of Services (Included VAT)".
+    // PDFs without VAT just have "Total amount".
+    const hasVatSection = /Total Value of Services \(Included VAT\)/.test(fullText);
+    let total = null;
+    if (hasVatSection) {
+      const m = fullText.match(/Total Value of Services \(Included VAT\)\s*([\d,]+\.\d+)/);
+      if (m) total = parseFloat(m[1].replace(/,/g, ''));
+    } else {
+      const m = fullText.match(/Total amount\s*([\d,]+\.\d+)/);
+      if (m) total = parseFloat(m[1].replace(/,/g, ''));
+    }
+    if (total === null || isNaN(total)) throw new Error('อ่านยอดเงินไม่ได้');
+
+    const vendor = getVendorConfig(type);
+    const fee = getFeeConfig(hasVatSection);
+    const g = getPdfGlobalConfig();
+    const refFromFile = fname.replace(/\.pdf$/i, '');
+    const itemsNote = extractLineItemsNote(lineText);
+    return {
+      _type: type, _fname: fname, _error: false,
+      _hasVat: hasVatSection,
+      docDate, refTo: refFromFile,
+      contact: vendor.contact, taxId: vendor.taxId, branch: g.branch,
+      invoiceNo: hasVatSection ? invNumber : '',
+      invoiceDate: hasVatSection ? docDate : '',
+      taxRecordDate: hasVatSection ? docDate : '',
+      priceType: hasVatSection ? 2 : 3,
+      account: fee.account, description: fee.desc,
+      qty: 1, unitPrice: total,
+      vatRate: hasVatSection ? 0.07 : 'NO',
+      wht: 0, payMethod: g.payMethod, paidAmount: total,
+      pgd: '', note: itemsNote, category: '', seq: 0
+    };
+  }
+
+  $('btn-parse-pdf').addEventListener('click', async () => {
+    if (!pdfState.zipFile) return;
+    const btnParse = $('btn-parse-pdf'), btnReset = $('btn-reset-pdf'), btnExport = $('btn-export-pdf');
+    btnParse.disabled = true; btnReset.disabled = true; btnExport.disabled = true;
+    pdfState.rows = []; pdfState.errors = [];
+    $('errors-list-pdf').classList.remove('show');
+    $('progress-pdf').classList.add('show');
+    const pb = $('progress-bar-pdf'), pl = $('progress-label-pdf'), pc = $('progress-count-pdf');
+
+    try {
+      pl.textContent = 'กำลังแตก ZIP…';
+      pb.style.width = '5%';
+
+      const zip = await JSZip.loadAsync(pdfState.zipFile);
+      const pdfFiles = [];
+      zip.forEach((path, file) => {
+        if (file.dir || !path.toLowerCase().endsWith('.pdf')) return;
+        pdfFiles.push({ base: path.split('/').pop(), file });
+      });
+      if (pdfFiles.length === 0) {
+        toast('ไม่พบ PDF ใน ZIP', 'error');
+        $('progress-pdf').classList.remove('show');
+        pb.style.width = '0%';
+        btnParse.disabled = false; btnReset.disabled = false;
+        return;
+      }
+
+      pc.textContent = `0 / ${pdfFiles.length}`;
+      pl.textContent = 'กำลังอ่าน PDF…';
+
+      for (let i = 0; i < pdfFiles.length; i++) {
+        const { base, file } = pdfFiles[i];
+        const type = detectPdfType(base);
+        if (!type) {
+          pdfState.errors.push(`${base} · ไม่รู้จักประเภท`);
+        } else {
+          try {
+            const buffer = await file.async('arraybuffer');
+            const row = await parsePdf(buffer, base, type);
+            pdfState.rows.push(row);
+          } catch (err) {
+            pdfState.errors.push(`${base} · ${err.message || err}`);
+            const fb = buildPdfFallback(base, type);
+            if (fb) pdfState.rows.push(fb);
+          }
+        }
+        const pct = 5 + Math.round(90 * (i + 1) / pdfFiles.length);
+        pb.style.width = pct + '%';
+        pc.textContent = `${i + 1} / ${pdfFiles.length}`;
+      }
+
+      const order = { 'Shopee-TIV': 1, 'SPX-TIV': 2, 'SPX-RCT': 3 };
+      pdfState.rows.sort((a, b) => {
+        const t = (order[a._type] || 9) - (order[b._type] || 9);
+        if (t !== 0) return t;
+        return a.docDate.localeCompare(b.docDate);
+      });
+      pdfState.rows.forEach((r, i) => r.seq = i + 1);
+
+      pb.style.width = '100%';
+      pl.textContent = 'เสร็จสิ้น';
+      setTimeout(() => {
+        $('progress-pdf').classList.remove('show');
+        pb.style.width = '0%';
+      }, 600);
+
+      renderPdfResults();
+      if (pdfState.errors.length > 0) {
+        const ul = $('errors-list-ul-pdf'); ul.innerHTML = '';
+        pdfState.errors.forEach(e => {
+          const li = document.createElement('li'); li.textContent = e; ul.appendChild(li);
+        });
+        $('errors-list-pdf').classList.add('show');
+        toast(`ประมวลผลสำเร็จ · ${pdfState.rows.length} รายการ · ข้อผิดพลาด ${pdfState.errors.length}`, 'warn');
+      } else {
+        toast(`ประมวลผลสำเร็จ · ${pdfState.rows.length} รายการ`, 'success');
+      }
+      btnParse.disabled = false;
+      btnReset.disabled = false;
+      btnExport.disabled = pdfState.rows.length === 0;
+    } catch (err) {
+      console.error(err);
+      toast('ผิดพลาด: ' + err.message, 'error');
+      $('progress-pdf').classList.remove('show');
+      pb.style.width = '0%';
+      btnParse.disabled = false; btnReset.disabled = false;
+    }
+  });
+
+  function renderPdfResults() {
+    $('empty-pdf').style.display = 'none';
+    $('results-pdf').style.display = 'block';
+    const c = { total: pdfState.rows.length, shopee: 0, spxtiv: 0, spxrct: 0 };
+    pdfState.rows.forEach(r => {
+      if (r._type === 'Shopee-TIV') c.shopee++;
+      else if (r._type === 'SPX-TIV') c.spxtiv++;
+      else if (r._type === 'SPX-RCT') c.spxrct++;
+    });
+    setStatNumber($('stat-total-pdf'), c.total, { unit: '<span class="unit"> rows</span>' });
+    setStatNumber($('stat-shopee'), c.shopee);
+    setStatNumber($('stat-spxtiv'), c.spxtiv);
+    setStatNumber($('stat-spxrct'), c.spxrct);
+    renderPdfTable();
+  }
+
+  function renderPdfTable() {
+    const tbody = $('preview-body-pdf');
+    tbody.innerHTML = '';
+    const filtered = pdfState.currentFilter === 'all'
+      ? pdfState.rows
+      : pdfState.rows.filter(r => r._type === pdfState.currentFilter);
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
+      return;
+    }
+    const tagMap = {
+      'Shopee-TIV': '<span class="tag-type shopee">SHOPEE</span>',
+      'SPX-TIV': '<span class="tag-type spx-tiv">SPX·TIV</span>',
+      'SPX-RCT': '<span class="tag-type spx-rct">SPX·RCT</span>',
+    };
+    filtered.forEach(r => {
+      const tr = document.createElement('tr');
+      if (r._error) tr.classList.add('row-error');
+      const d = `${r.docDate.slice(0,4)}-${r.docDate.slice(4,6)}-${r.docDate.slice(6,8)}`;
+      const eb = r._error ? '<span class="tag-err">ERR</span>' : '';
+      tr.innerHTML = `
+        <td class="td-num">${r.seq}</td>
+        <td class="td-mono">${d}</td>
+        <td>${tagMap[r._type]}${eb}</td>
+        <td class="td-mono">${r.contact}</td>
+        <td class="td-mono">${r.invoiceNo || '—'}</td>
+        <td class="td-mono">${r.account}</td>
+        <td>${r.description}</td>
+        <td class="td-mono">${r.vatRate === 'NO' ? 'NO' : (r.vatRate*100).toFixed(0)+'%'}</td>
+        <td class="td-amount">${r.paidAmount.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  document.querySelectorAll('#filters-pdf .filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#filters-pdf .filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      pdfState.currentFilter = btn.dataset.filter;
+      renderPdfTable();
+    });
+  });
+
+  $('btn-reset-pdf').addEventListener('click', () => {
+    pdfState.zipFile = null; pdfState.rows = []; pdfState.errors = [];
+    pdfState.currentFilter = 'all';
+    fiPdf.value = '';
+    dzPdf.classList.remove('has-file');
+    $('drop-title-pdf').textContent = 'คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่';
+    $('drop-sub-pdf').textContent = 'รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)';
+    $('btn-parse-pdf').disabled = true;
+    $('btn-export-pdf').disabled = true;
+    $('btn-reset-pdf').disabled = true;
+    $('results-pdf').style.display = 'none';
+    $('empty-pdf').style.display = 'block';
+    $('errors-list-pdf').classList.remove('show');
+    document.querySelectorAll('#filters-pdf .filter-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.filter === 'all'));
+    toast('รีเซ็ตเรียบร้อย');
+  });
+
+  $('btn-export-pdf').addEventListener('click', () => {
+    if (pdfState.rows.length === 0) return;
+    const headers = [
+      'ลำดับที่*','วันที่เอกสาร','อ้างอิงถึง','ผู้รับเงิน/คู่ค้า','เลขทะเบียน 13 หลัก',
+      'เลขสาขา 5 หลัก','เลขที่ใบกำกับฯ (ถ้ามี)','วันที่ใบกำกับฯ (ถ้ามี)','วันที่บันทึกภาษีซื้อ (ถ้ามี)',
+      'ประเภทราคา','บัญชี','คำอธิบาย','จำนวน','ราคาต่อหน่วย','อัตราภาษี','หัก ณ ที่จ่าย (ถ้ามี)',
+      'ชำระโดย','จำนวนเงินที่ชำระ','ภ.ง.ด. (ถ้ามี)','หมายเหตุ','กลุ่มจัดประเภท'
+    ];
+    const data = [headers];
+    pdfState.rows.forEach(r => {
+      data.push([
+        r.seq, Number(r.docDate), r.refTo || '', r.contact, r.taxId, r.branch,
+        r.invoiceNo || '', r.invoiceDate ? Number(r.invoiceDate) : '',
+        r.taxRecordDate ? Number(r.taxRecordDate) : '', r.priceType,
+        r.account, r.description, r.qty, r.unitPrice, r.vatRate,
+        r.wht, r.payMethod, r.paidAmount, r.pgd || '', r.note || '', r.category || ''
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [
+      {wch:9},{wch:13},{wch:14},{wch:16},{wch:18},{wch:14},{wch:38},{wch:20},{wch:20},
+      {wch:11},{wch:8},{wch:22},{wch:7},{wch:13},{wch:10},{wch:18},{wch:10},{wch:17},
+      {wch:13},{wch:50},{wch:14}
+    ];
+    applyNoteWrapText(ws, pdfState.rows.length);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Import_Expenses');
+    const now = new Date(); const pad = n => String(n).padStart(2,'0');
+    XLSX.writeFile(wb, `PEAK_ImportExpense_ShopeeSPX_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`);
+    confettiBurst();
+    toast(`Export สำเร็จ · ${pdfState.rows.length} รายการ`, 'success');
+  });
+
+  /* ====================================================================================
+     ==============  TAB 2: TIKTOK ADS (XLSX → PEAK)  =================================
+  ==================================================================================== */
+
+  const ttState = {
+    file: null,
+    rawTx: [],     // raw transactions from source
+    rows: [],      // final PEAK rows
+    errors: [],
+    docDate: null,   // YYYYMMDD — last day of month
+    totalSum: 0,
+    pp36: 0,
+    currentFilter: 'all'
+  };
+
+  // ----- Method mapping CRUD UI -----
+  const defaultMethodMap = [
+    { match: 'GMV Pay',      code: 'EWL003' },
+    { match: 'Credit or debit card', code: 'ADV001' }
+  ];
+  let methodMap = JSON.parse(JSON.stringify(defaultMethodMap));
+
+  function renderMethodMap() {
+    const wrap = $('method-map');
+    wrap.innerHTML = '';
+    methodMap.forEach((m, i) => {
+      const row = document.createElement('div');
+      row.className = 'method-map-row';
+      row.innerHTML = `
+        <input type="text" placeholder="คำที่ match (เช่น GMV Pay)" data-k="match" data-i="${i}" value="${m.match.replace(/"/g,'&quot;')}"/>
+        <input type="text" placeholder="รหัส (EWL003)" data-k="code" data-i="${i}" value="${m.code.replace(/"/g,'&quot;')}"/>
+        <button class="method-map-del" data-del="${i}" title="ลบ">✕</button>
+      `;
+      wrap.appendChild(row);
+    });
+    wrap.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', e => {
+        const i = +e.target.dataset.i;
+        const k = e.target.dataset.k;
+        methodMap[i][k] = e.target.value;
+      });
+    });
+    wrap.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const i = +e.target.dataset.del;
+        methodMap.splice(i, 1);
+        renderMethodMap();
+      });
+    });
+  }
+  renderMethodMap();
+  $('btn-add-method').addEventListener('click', () => {
+    methodMap.push({ match: '', code: '' });
+    renderMethodMap();
+  });
+  $('cfg-tt-method-default').addEventListener('input', e => {
+    $('method-default-display').textContent = e.target.value || '(empty)';
+  });
+
+  function resolvePaymentMethod(paymentMethodText) {
+    const defaultCode = $('cfg-tt-method-default').value.trim() || 'EWL003';
+    if (!paymentMethodText) return defaultCode;
+    const lower = String(paymentMethodText).toLowerCase();
+    for (const m of methodMap) {
+      if (!m.match || !m.code) continue;
+      if (lower.includes(m.match.toLowerCase())) return m.code.trim();
+    }
+    return defaultCode;
+  }
+
+  // ----- Upload handlers -----
+  const dzTt = $('dropzone-tt');
+  const fiTt = $('fileInput-tt');
+  ['dragenter','dragover'].forEach(ev => dzTt.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzTt.classList.add('active');
+  }));
+  ['dragleave','drop'].forEach(ev => dzTt.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzTt.classList.remove('active');
+  }));
+  dzTt.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if (file) handleTtFile(file);
+  });
+  fiTt.addEventListener('change', e => {
+    if (e.target.files[0]) handleTtFile(e.target.files[0]);
+  });
+
+  function handleTtFile(file) {
+    const lname = file.name.toLowerCase();
+    if (!lname.endsWith('.xlsx') && !lname.endsWith('.xls') && !lname.endsWith('.csv')) {
+      toast('รองรับเฉพาะไฟล์ .xlsx / .xls / .csv', 'error');
+      return;
+    }
+    ttState.file = file;
+    dzTt.classList.add('has-file');
+    $('drop-title-tt').textContent = file.name;
+    $('drop-sub-tt').textContent = `${(file.size/1024).toFixed(1)} KB · พร้อมประมวลผล`;
+    $('btn-parse-tt').disabled = false;
+    $('btn-reset-tt').disabled = false;
+  }
+
+  // ----- Parse transaction amount -----
+  function parseAmount(s) {
+    if (typeof s === 'number') return s;
+    if (s == null) return NaN;
+    const cleaned = String(s).replace(/[+,\s]/g, '');
+    const n = parseFloat(cleaned);
+    return isNaN(n) ? NaN : n;
+  }
+
+  // ----- Parse transaction time "YYYY-MM-DD HH:MM:SS" or Excel date -----
+  function parseTxTime(raw) {
+    if (raw == null) return null;
+    if (raw instanceof Date) {
+      return {
+        date: raw,
+        yyyymmdd: `${raw.getFullYear()}${String(raw.getMonth()+1).padStart(2,'0')}${String(raw.getDate()).padStart(2,'0')}`,
+        display: `${String(raw.getDate()).padStart(2,'0')}/${String(raw.getMonth()+1).padStart(2,'0')}/${raw.getFullYear()}`,
+        time: `${String(raw.getHours()).padStart(2,'0')}:${String(raw.getMinutes()).padStart(2,'0')}:${String(raw.getSeconds()).padStart(2,'0')}`
+      };
+    }
+    // Excel serial
+    if (typeof raw === 'number') {
+      const d = XLSX.SSF.parse_date_code(raw);
+      if (!d) return null;
+      const dt = new Date(d.y, d.m - 1, d.d, d.H || 0, d.M || 0, Math.floor(d.S || 0));
+      return {
+        date: dt,
+        yyyymmdd: `${dt.getFullYear()}${String(dt.getMonth()+1).padStart(2,'0')}${String(dt.getDate()).padStart(2,'0')}`,
+        display: `${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}/${dt.getFullYear()}`,
+        time: `${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}:${String(Math.floor(dt.getSeconds())).padStart(2,'0')}`
+      };
+    }
+    const str = String(raw).trim();
+    const m = str.match(/^(\d{4})-(\d{2})-(\d{2})[\sT](\d{2}):(\d{2}):(\d{2})/);
+    if (m) {
+      return {
+        date: new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]),
+        yyyymmdd: `${m[1]}${m[2]}${m[3]}`,
+        display: `${m[3]}/${m[2]}/${m[1]}`,
+        time: `${m[4]}:${m[5]}:${m[6]}`
+      };
+    }
+    // Fallback Date.parse
+    const d = new Date(str);
+    if (!isNaN(d.getTime())) {
+      return {
+        date: d,
+        yyyymmdd: `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`,
+        display: `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`,
+        time: `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`
+      };
+    }
+    return null;
+  }
+
+  // ----- Compute last day of month from YYYYMMDD string -----
+  function lastDayOfMonthYYYYMMDD(yyyymmdd) {
+    const y = +yyyymmdd.slice(0, 4);
+    const m = +yyyymmdd.slice(4, 6);
+    // last day = day 0 of next month
+    const d = new Date(y, m, 0);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
+  }
+
+  // Thai month name
+  const thaiMonths = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+
+  // ----- Parse button -----
+  $('btn-parse-tt').addEventListener('click', async () => {
+    if (!ttState.file) return;
+    const btnParse = $('btn-parse-tt'), btnReset = $('btn-reset-tt'), btnExport = $('btn-export-tt');
+    btnParse.disabled = true; btnReset.disabled = true; btnExport.disabled = true;
+    ttState.rawTx = []; ttState.rows = []; ttState.errors = [];
+    $('errors-list-tt').classList.remove('show');
+    $('progress-tt').classList.add('show');
+    const pb = $('progress-bar-tt'), pl = $('progress-label-tt'), pc = $('progress-count-tt');
+
+    try {
+      pl.textContent = 'กำลังอ่านไฟล์…';
+      pb.style.width = '10%';
+      const buffer = await ttState.file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
+
+      pb.style.width = '30%';
+      pl.textContent = 'กำลังค้นหา sheet Payments…';
+
+      // Prefer "Payments" sheet; fallback to first sheet
+      let sheetName = wb.SheetNames.find(n => n.toLowerCase() === 'payments') || wb.SheetNames[0];
+      const sheet = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
+
+      if (rows.length < 2) throw new Error('ไม่พบข้อมูลในไฟล์');
+
+      pb.style.width = '50%';
+      pl.textContent = 'กำลังค้นหา column header…';
+
+      // Find header row (the row that has "Transaction time" / "Transaction ID" etc.)
+      let headerIdx = -1;
+      for (let i = 0; i < Math.min(rows.length, 5); i++) {
+        const r = rows[i] || [];
+        const low = r.map(c => String(c || '').toLowerCase());
+        if (low.includes('transaction time') || low.includes('transaction id')) {
+          headerIdx = i; break;
+        }
+      }
+      if (headerIdx === -1) headerIdx = 0;
+      const header = rows[headerIdx].map(c => String(c || '').toLowerCase().trim());
+
+      const colIdx = {
+        time: header.indexOf('transaction time'),
+        id: header.indexOf('transaction id'),
+        method: header.indexOf('payment method'),
+        status: header.indexOf('status'),
+        amount: header.indexOf('amount'),
+        type: header.indexOf('transaction type')
+      };
+      if (colIdx.time < 0 || colIdx.id < 0 || colIdx.amount < 0) {
+        throw new Error('ไม่พบ column: Transaction time / Transaction ID / Amount');
+      }
+
+      pb.style.width = '60%';
+      pl.textContent = 'กำลังแปลงข้อมูล…';
+
+      const dataRows = rows.slice(headerIdx + 1);
+      const parsed = [];
+      const skipped = [];
+      for (let i = 0; i < dataRows.length; i++) {
+        const r = dataRows[i] || [];
+        if (r.every(c => c == null || c === '')) continue;
+        const tRaw = r[colIdx.time];
+        const idRaw = r[colIdx.id];
+        const amtRaw = r[colIdx.amount];
+        const mRaw = colIdx.method >= 0 ? r[colIdx.method] : '';
+        const statusRaw = colIdx.status >= 0 ? r[colIdx.status] : '';
+        const typeRaw = colIdx.type >= 0 ? r[colIdx.type] : '';
+        if (!tRaw || !idRaw || amtRaw == null) {
+          skipped.push(`row ${headerIdx + 2 + i} · ข้อมูลไม่ครบ`);
+          continue;
+        }
+        const tm = parseTxTime(tRaw);
+        const amt = parseAmount(amtRaw);
+        if (!tm || isNaN(amt)) {
+          skipped.push(`row ${headerIdx + 2 + i} · parse เวลา/จำนวนไม่ได้`);
+          continue;
+        }
+        parsed.push({
+          timeRaw: tRaw, timeParsed: tm,
+          id: String(idRaw).trim(),
+          method: String(mRaw || '').trim(),
+          status: String(statusRaw || '').trim(),
+          amount: amt,
+          txType: String(typeRaw || '').trim()
+        });
+      }
+
+      if (parsed.length === 0) throw new Error('ไม่พบข้อมูล transactions ที่ใช้ได้');
+      ttState.rawTx = parsed;
+      ttState.errors = skipped;
+
+      pb.style.width = '75%';
+      pl.textContent = 'กำลังสร้างรายการ PEAK…';
+      pc.textContent = `${parsed.length} transactions`;
+
+      // Compute doc date = last day of month (use the MAX transaction date's month)
+      const maxDate = parsed.reduce((a, b) => (b.timeParsed.date > a ? b.timeParsed.date : a), parsed[0].timeParsed.date);
+      const yRef = maxDate.getFullYear();
+      const mRef = maxDate.getMonth() + 1;
+      const pad = n => String(n).padStart(2, '0');
+      const docDate = `${yRef}${pad(mRef)}${pad(new Date(yRef, mRef, 0).getDate())}`;
+      ttState.docDate = docDate;
+
+      // Total sum = sum of all amounts (including Bill payment + Add balance - both count for ภ.พ.36)
+      const total = parsed.reduce((s, r) => s + r.amount, 0);
+      ttState.totalSum = total;
+      const pp36 = Math.round(total * 0.07 * 100) / 100;
+      ttState.pp36 = pp36;
+
+      // Config reads
+      const contact = $('cfg-tt-contact').value.trim();
+      const taxId = $('cfg-tt-taxid').value.trim();
+      const account = $('cfg-tt-account').value.trim();
+      const descPrefix = $('cfg-tt-desc-prefix').value.trim();
+      const pp36Contact = $('cfg-tt-pp36-contact').value.trim();
+      const pp36Account = $('cfg-tt-pp36-account').value.trim();
+      const pp36Pay = $('cfg-tt-pp36-paymethod').value.trim();
+      const monthName = thaiMonths[mRef - 1];
+      const yearCE = yRef;
+
+      // Build PEAK rows
+      const out = [];
+
+      // Row group ลำดับที่ 2: ภ.พ.36 ค้างจ่าย (1 row)
+      out.push({
+        _type: 'PP36_PAYABLE',
+        groupSeq: 2,
+        docDate, refTo: '',
+        contact: pp36Contact, taxId: '', branch: '',
+        invoiceNo: '', invoiceDate: '', taxRecordDate: '',
+        priceType: 3, account: pp36Account,
+        description: 'ภ.พ.36 ค้างจ่าย',
+        qty: 1, unitPrice: pp36, vatRate: 'NO', wht: 0,
+        payMethod: '', paidAmount: '',
+        pgd: '', note: `ค่า โฆษณา Tiktok เดือน ${monthName} ${yearCE}`, category: ''
+      });
+
+      // Row group ลำดับที่ 1: ภาษีขาย ภ.พ.36 (negative) (1 row)
+      const firstTxRef = parsed[0].id;
+      out.push({
+        _type: 'PP36_SALES',
+        groupSeq: 1,
+        docDate, refTo: firstTxRef,
+        contact, taxId, branch: '',
+        invoiceNo: '', invoiceDate: '', taxRecordDate: '',
+        priceType: 1, account: pp36Account,
+        description: 'ภาษีขาย ภ.พ.36',
+        qty: 1, unitPrice: -pp36, vatRate: 'NO', wht: 0,
+        payMethod: pp36Pay, paidAmount: -pp36,
+        pgd: '', note: '', category: ''
+      });
+
+      // Row group ลำดับที่ 1: expense rows (1 per transaction)
+      parsed.forEach(tx => {
+        const desc = `${descPrefix} วันที่ ${tx.timeParsed.display} เวลา ${tx.timeParsed.time} ID ธุรกรรม ${tx.id} /${tx.method || '-'} /${tx.txType || '-'}`;
+        out.push({
+          _type: 'EXPENSE',
+          groupSeq: 1,
+          docDate, refTo: tx.id,
+          contact, taxId, branch: '',
+          invoiceNo: '', invoiceDate: '', taxRecordDate: '',
+          priceType: 1, account,
+          description: desc,
+          qty: 1, unitPrice: tx.amount, vatRate: 0.07, wht: 0,
+          payMethod: resolvePaymentMethod(tx.method), paidAmount: tx.amount,
+          pgd: '', note: '', category: ''
+        });
+      });
+
+      ttState.rows = out;
+
+      pb.style.width = '100%';
+      pl.textContent = 'เสร็จสิ้น';
+      setTimeout(() => {
+        $('progress-tt').classList.remove('show');
+        pb.style.width = '0%';
+      }, 600);
+
+      renderTtResults();
+
+      if (ttState.errors.length > 0) {
+        const ul = $('errors-list-ul-tt'); ul.innerHTML = '';
+        ttState.errors.forEach(e => {
+          const li = document.createElement('li'); li.textContent = e; ul.appendChild(li);
+        });
+        $('errors-list-tt').classList.add('show');
+        toast(`ประมวลผลสำเร็จ · ${parsed.length} รายการ · ข้อมูลที่ข้ามไป ${ttState.errors.length}`, 'warn');
+      } else {
+        toast(`ประมวลผลสำเร็จ · ${parsed.length} transactions`, 'success');
+      }
+      btnParse.disabled = false;
+      btnReset.disabled = false;
+      btnExport.disabled = false;
+    } catch (err) {
+      console.error(err);
+      toast('ผิดพลาด: ' + err.message, 'error');
+      $('progress-tt').classList.remove('show');
+      pb.style.width = '0%';
+      btnParse.disabled = false;
+      btnReset.disabled = false;
+    }
+  });
+
+  function renderTtResults() {
+    $('empty-tt').style.display = 'none';
+    $('results-tt').style.display = 'block';
+    setStatNumber($('stat-total-tt'), ttState.rows.length, { unit: '<span class="unit"> rows</span>' });
+    setStatNumber($('stat-tt-tx'), ttState.rawTx.length);
+    setStatNumber($('stat-tt-sum'), ttState.totalSum, { fmt: formatMoney });
+    setStatNumber($('stat-tt-pp36'), ttState.pp36, { fmt: formatMoney });
+    renderTtTable();
+  }
+
+  function renderTtTable() {
+    const tbody = $('preview-body-tt');
+    tbody.innerHTML = '';
+    const filter = ttState.currentFilter;
+    let filtered = ttState.rows;
+    if (filter === 'pp36') filtered = ttState.rows.filter(r => r._type === 'PP36_PAYABLE' || r._type === 'PP36_SALES');
+    else if (filter === 'expense') filtered = ttState.rows.filter(r => r._type === 'EXPENSE');
+
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
+      return;
+    }
+    filtered.forEach((r, idx) => {
+      const tr = document.createElement('tr');
+      let tag = '';
+      if (r._type === 'PP36_PAYABLE') { tag = '<span class="tag-type pp36">ภ.พ.36</span>'; tr.classList.add('row-pp36'); }
+      else if (r._type === 'PP36_SALES') { tag = '<span class="tag-type pp36-neg">ภาษีขาย (-)</span>'; tr.classList.add('row-pp36-neg'); }
+      else if (r._type === 'EXPENSE') { tag = '<span class="tag-type tiktok">TIKTOK</span>'; }
+
+      const amount = typeof r.paidAmount === 'number' ? r.paidAmount : r.unitPrice;
+      const amtClass = amount < 0 ? 'neg' : '';
+      const amtStr = typeof amount === 'number'
+        ? amount.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})
+        : '—';
+      tr.innerHTML = `
+        <td class="td-num">${idx + 1}</td>
+        <td class="td-mono">${r.groupSeq}</td>
+        <td>${tag}</td>
+        <td class="td-mono">${r.account}</td>
+        <td class="td-desc-sm" title="${r.description.replace(/"/g,'&quot;')}">${r.description}</td>
+        <td class="td-mono">${r.vatRate === 'NO' ? 'NO' : (r.vatRate*100).toFixed(0)+'%'}</td>
+        <td class="td-mono">${r.payMethod || '—'}</td>
+        <td class="td-amount ${amtClass}">${amtStr}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  document.querySelectorAll('#filters-tt .filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#filters-tt .filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      ttState.currentFilter = btn.dataset.filter;
+      renderTtTable();
+    });
+  });
+
+  $('btn-reset-tt').addEventListener('click', () => {
+    ttState.file = null; ttState.rawTx = []; ttState.rows = []; ttState.errors = [];
+    ttState.currentFilter = 'all';
+    fiTt.value = '';
+    dzTt.classList.remove('has-file');
+    $('drop-title-tt').textContent = 'คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่';
+    $('drop-sub-tt').textContent = 'รองรับ .xlsx / .xls / .csv (Transaction export)';
+    $('btn-parse-tt').disabled = true;
+    $('btn-export-tt').disabled = true;
+    $('btn-reset-tt').disabled = true;
+    $('results-tt').style.display = 'none';
+    $('empty-tt').style.display = 'block';
+    $('errors-list-tt').classList.remove('show');
+    document.querySelectorAll('#filters-tt .filter-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.filter === 'all'));
+    toast('รีเซ็ตเรียบร้อย');
+  });
+
+  $('btn-export-tt').addEventListener('click', () => {
+    if (ttState.rows.length === 0) return;
+    const headers = [
+      'ลำดับที่*','วันที่เอกสาร','อ้างอิงถึง','ผู้รับเงิน/คู่ค้า','เลขทะเบียน 13 หลัก',
+      'เลขสาขา 5 หลัก','เลขที่ใบกำกับฯ (ถ้ามี)','วันที่ใบกำกับฯ (ถ้ามี)','วันที่บันทึกภาษีซื้อ (ถ้ามี)',
+      'ประเภทราคา','บัญชี','คำอธิบาย','จำนวน','ราคาต่อหน่วย','อัตราภาษี','หัก ณ ที่จ่าย (ถ้ามี)',
+      'ชำระโดย','จำนวนเงินที่ชำระ','ภ.ง.ด. (ถ้ามี)','หมายเหตุ','กลุ่มจัดประเภท'
+    ];
+    const data = [headers];
+    ttState.rows.forEach(r => {
+      data.push([
+        r.groupSeq,
+        Number(r.docDate),
+        r.refTo || '',
+        r.contact,
+        r.taxId || '',
+        r.branch || '',
+        r.invoiceNo || '',
+        r.invoiceDate ? Number(r.invoiceDate) : '',
+        r.taxRecordDate ? Number(r.taxRecordDate) : '',
+        r.priceType,
+        r.account,
+        r.description,
+        r.qty,
+        r.unitPrice,
+        r.vatRate,
+        r.wht,
+        r.payMethod || '',
+        r.paidAmount === '' ? '' : r.paidAmount,
+        r.pgd || '',
+        r.note || '',
+        r.category || ''
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [
+      {wch:9},{wch:13},{wch:40},{wch:16},{wch:14},{wch:14},{wch:20},{wch:20},{wch:20},
+      {wch:11},{wch:8},{wch:90},{wch:7},{wch:13},{wch:10},{wch:18},{wch:10},{wch:17},
+      {wch:13},{wch:40},{wch:14}
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Import_Expenses');
+    const now = new Date(); const pad = n => String(n).padStart(2,'0');
+    XLSX.writeFile(wb, `PEAK_ImportExpense_TikTokAds_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`);
+    confettiBurst();
+    toast(`Export สำเร็จ · ${ttState.rows.length} รายการ`, 'success');
+  });
+
+  /* ====================================================================================
+     ==============  TAB 3: COMMISSION (TTSTHAC PDFs) =================================
+  ==================================================================================== */
+
+  const cmState = {
+    zipFile: null,
+    rows: [],
+    errors: [],
+    currentFilter: 'all'
+  };
+
+  const MONTH_MAP = {
+    'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+    'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
+    'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+  };
+
+  function parseReceiptDate(str) {
+    if (!str) return null;
+    const m = str.trim().match(/^([A-Za-z]+)\s+(\d+),\s*(\d{4})$/);
+    if (!m) return null;
+    const mm = MONTH_MAP[m[1].slice(0, 3).toLowerCase()];
+    if (!mm) return null;
+    const dd = String(m[2]).padStart(2, '0');
+    return `${m[3]}${mm}${dd}`;
+  }
+
+  const dzCm = $('dropzone-cm');
+  const fiCm = $('fileInput-cm');
+  ['dragenter','dragover'].forEach(ev => dzCm.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzCm.classList.add('active');
+  }));
+  ['dragleave','drop'].forEach(ev => dzCm.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzCm.classList.remove('active');
+  }));
+  dzCm.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if (file) handleCmFile(file);
+  });
+  fiCm.addEventListener('change', e => {
+    if (e.target.files[0]) handleCmFile(e.target.files[0]);
+  });
+
+  function handleCmFile(file) {
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      toast('ต้องเป็นไฟล์ .zip เท่านั้น', 'error'); return;
+    }
+    cmState.zipFile = file;
+    dzCm.classList.add('has-file');
+    $('drop-title-cm').textContent = file.name;
+    $('drop-sub-cm').textContent = `${(file.size/1024/1024).toFixed(2)} MB · พร้อมประมวลผล`;
+    $('btn-parse-cm').disabled = false;
+    $('btn-reset-cm').disabled = false;
+  }
+
+  async function parseCommissionPdf(buffer, fname) {
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    let fullText = '';
+    let lineText = '';
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      fullText += content.items.map(it => it.str).join(' ') + '\n';
+      for (const it of content.items) {
+        lineText += it.str;
+        if (it.hasEOL) lineText += '\n';
+        else lineText += ' ';
+      }
+      lineText += '\n';
+    }
+
+    const mDate = fullText.match(/Receipt\s+Date\s*:\s*([A-Za-z]+\s+\d+,\s*\d{4})/);
+    const receiptDateStr = mDate ? mDate[1].trim() : null;
+    const docDate = parseReceiptDate(receiptDateStr);
+    if (!docDate) throw new Error('หา Receipt Date ไม่เจอ');
+
+    const mRN = fullText.match(/Receipt\s+Number\s*:\s*(\S+)/);
+    const receiptNo = mRN ? mRN[1].trim() : fname.replace(/\.pdf$/i, '');
+
+    const mPeriod = fullText.match(/Period\s*:\s*(.+?)(?:\s+Bill\s+From|\s+Client\s+Name|$)/);
+    const period = mPeriod ? mPeriod[1].trim() : '';
+
+    const mCreator = fullText.match(/Creator name:\s*(.+?)(?=\s*Creator Username:)/);
+    const creator = mCreator ? mCreator[1].trim() : '';
+
+    const mUser = fullText.match(/Creator Username:\s*(\S+)/);
+    const username = mUser ? mUser[1].trim() : '';
+
+    const mBillFrom = fullText.match(/Bill\s+From\s+Client Name:\s*(.+?)(?=\s*Billing Address:|\s*Bill\s+To)/);
+    const billFromName = mBillFrom ? mBillFrom[1].trim() : '';
+
+    let amount = null;
+    const mComm = fullText.match(/Creator commission\s*\/\s*฿?([\d,]+\.\d+)/);
+    if (mComm) amount = parseFloat(mComm[1].replace(/,/g, ''));
+    if (amount === null) {
+      const mTot = fullText.match(/Total Amount\s+฿?([\d,]+\.\d+)/);
+      if (mTot) amount = parseFloat(mTot[1].replace(/,/g, ''));
+    }
+    if (amount === null || isNaN(amount)) throw new Error('อ่านยอด Commission ไม่ได้');
+
+    const itemsNote = extractLineItemsNote(lineText);
+    return {
+      docDate, receiptNo, period,
+      creator, username, billFromName,
+      amount, itemsNote,
+      _error: false, _fname: fname
+    };
+  }
+
+  function buildCmFallback(fname) {
+    const d = new Date();
+    const docDate = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
+    return {
+      docDate,
+      receiptNo: fname.replace(/\.pdf$/i, ''),
+      period: '',
+      creator: '', username: '', billFromName: '',
+      amount: 0,
+      _error: true, _fname: fname
+    };
+  }
+
+  function resolveCmName(parsed) {
+    const src = $('cfg-cm-name-source').value;
+    if (src === 'creator') return parsed.creator || parsed.billFromName || parsed.username || '';
+    if (src === 'username') return parsed.username || parsed.creator || parsed.billFromName || '';
+    return parsed.billFromName || parsed.creator || parsed.username || '';
+  }
+
+  $('btn-parse-cm').addEventListener('click', async () => {
+    if (!cmState.zipFile) return;
+    const btnParse = $('btn-parse-cm'), btnReset = $('btn-reset-cm'), btnExport = $('btn-export-cm');
+    btnParse.disabled = true; btnReset.disabled = true; btnExport.disabled = true;
+    cmState.rows = []; cmState.errors = [];
+    $('errors-list-cm').classList.remove('show');
+    $('progress-cm').classList.add('show');
+    const pb = $('progress-bar-cm'), pl = $('progress-label-cm'), pc = $('progress-count-cm');
+
+    try {
+      pl.textContent = 'กำลังแตก ZIP…';
+      pb.style.width = '5%';
+
+      const zip = await JSZip.loadAsync(cmState.zipFile);
+      const pdfFiles = [];
+      zip.forEach((path, file) => {
+        if (file.dir || !path.toLowerCase().endsWith('.pdf')) return;
+        pdfFiles.push({ base: path.split('/').pop(), file });
+      });
+      if (pdfFiles.length === 0) {
+        toast('ไม่พบ PDF ใน ZIP', 'error');
+        $('progress-cm').classList.remove('show');
+        pb.style.width = '0%';
+        btnParse.disabled = false; btnReset.disabled = false;
+        return;
+      }
+
+      pc.textContent = `0 / ${pdfFiles.length}`;
+      pl.textContent = 'กำลังอ่าน PDF…';
+
+      for (let i = 0; i < pdfFiles.length; i++) {
+        const { base, file } = pdfFiles[i];
+        try {
+          const buffer = await file.async('arraybuffer');
+          const parsed = await parseCommissionPdf(buffer, base);
+          cmState.rows.push(parsed);
+        } catch (err) {
+          cmState.errors.push(`${base} · ${err.message || err}`);
+          cmState.rows.push(buildCmFallback(base));
+        }
+        const pct = 5 + Math.round(90 * (i + 1) / pdfFiles.length);
+        pb.style.width = pct + '%';
+        pc.textContent = `${i + 1} / ${pdfFiles.length}`;
+      }
+
+      cmState.rows.sort((a, b) => {
+        const d = a.docDate.localeCompare(b.docDate);
+        if (d !== 0) return d;
+        return a.receiptNo.localeCompare(b.receiptNo);
+      });
+
+      pb.style.width = '100%';
+      pl.textContent = 'เสร็จสิ้น';
+      setTimeout(() => {
+        $('progress-cm').classList.remove('show');
+        pb.style.width = '0%';
+      }, 600);
+
+      renderCmResults();
+      if (cmState.errors.length > 0) {
+        const ul = $('errors-list-ul-cm'); ul.innerHTML = '';
+        cmState.errors.forEach(e => {
+          const li = document.createElement('li'); li.textContent = e; ul.appendChild(li);
+        });
+        $('errors-list-cm').classList.add('show');
+        toast(`ประมวลผลสำเร็จ · ${cmState.rows.length} รายการ · ข้อผิดพลาด ${cmState.errors.length}`, 'warn');
+      } else {
+        toast(`ประมวลผลสำเร็จ · ${cmState.rows.length} รายการ`, 'success');
+      }
+      btnParse.disabled = false;
+      btnReset.disabled = false;
+      btnExport.disabled = cmState.rows.length === 0;
+    } catch (err) {
+      console.error(err);
+      toast('ผิดพลาด: ' + err.message, 'error');
+      $('progress-cm').classList.remove('show');
+      pb.style.width = '0%';
+      btnParse.disabled = false; btnReset.disabled = false;
+    }
+  });
+
+  function renderCmResults() {
+    $('empty-cm').style.display = 'none';
+    $('results-cm').style.display = 'block';
+
+    const uniqCreators = new Set();
+    let sum = 0;
+    const dates = [];
+    cmState.rows.forEach(r => {
+      const name = resolveCmName(r);
+      if (name) uniqCreators.add(name);
+      sum += r.amount || 0;
+      if (r.docDate) dates.push(r.docDate);
+    });
+    const minDate = dates.length ? dates.reduce((a,b) => a < b ? a : b) : null;
+    const maxDate = dates.length ? dates.reduce((a,b) => a > b ? a : b) : null;
+    const fmt = d => d ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}` : '—';
+    const dateRange = (minDate && maxDate)
+      ? (minDate === maxDate ? fmt(minDate) : `${fmt(minDate)} → ${fmt(maxDate)}`)
+      : '—';
+
+    setStatNumber($('stat-total-cm'), cmState.rows.length, { unit: '<span class="unit"> rows</span>' });
+    setStatNumber($('stat-cm-creators'), uniqCreators.size);
+    setStatNumber($('stat-cm-sum'), sum, { fmt: formatMoney });
+    $('stat-cm-daterange').textContent = dateRange;
+    renderCmTable();
+  }
+
+  function renderCmTable() {
+    const tbody = $('preview-body-cm');
+    tbody.innerHTML = '';
+    const contact = $('cfg-cm-contact').value.trim();
+    const account = $('cfg-cm-account').value.trim();
+    const descPrefix = $('cfg-cm-desc-prefix').value.trim();
+    if (cmState.rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
+      return;
+    }
+    cmState.rows.forEach((r, idx) => {
+      const tr = document.createElement('tr');
+      if (r._error) tr.classList.add('row-error');
+      const name = resolveCmName(r);
+      const desc = `${descPrefix} ${name}`.trim();
+      const d = `${r.docDate.slice(0,4)}-${r.docDate.slice(4,6)}-${r.docDate.slice(6,8)}`;
+      const eb = r._error ? '<span class="tag-err">ERR</span>' : '';
+      tr.innerHTML = `
+        <td class="td-num">${idx + 1}</td>
+        <td class="td-mono">${d}</td>
+        <td class="td-mono">${r.receiptNo}</td>
+        <td>${name || '—'} ${eb}</td>
+        <td class="td-mono">${contact}</td>
+        <td class="td-mono">${account}</td>
+        <td class="td-desc-sm" title="${desc.replace(/"/g,'&quot;')}">${desc}</td>
+        <td class="td-amount">${(r.amount || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  ['cfg-cm-name-source','cfg-cm-contact','cfg-cm-account','cfg-cm-desc-prefix'].forEach(id => {
+    $(id).addEventListener('change', () => { if (cmState.rows.length) renderCmTable(); });
+    $(id).addEventListener('input', () => { if (cmState.rows.length) renderCmTable(); });
+  });
+
+  $('btn-reset-cm').addEventListener('click', () => {
+    cmState.zipFile = null; cmState.rows = []; cmState.errors = [];
+    cmState.currentFilter = 'all';
+    fiCm.value = '';
+    dzCm.classList.remove('has-file');
+    $('drop-title-cm').textContent = 'คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่';
+    $('drop-sub-cm').textContent = 'รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)';
+    $('btn-parse-cm').disabled = true;
+    $('btn-export-cm').disabled = true;
+    $('btn-reset-cm').disabled = true;
+    $('results-cm').style.display = 'none';
+    $('empty-cm').style.display = 'block';
+    $('errors-list-cm').classList.remove('show');
+    toast('รีเซ็ตเรียบร้อย');
+  });
+
+  $('btn-export-cm').addEventListener('click', () => {
+    if (cmState.rows.length === 0) return;
+    const contact = $('cfg-cm-contact').value.trim();
+    const account = $('cfg-cm-account').value.trim();
+    const descPrefix = $('cfg-cm-desc-prefix').value.trim();
+    const payMethod = $('cfg-cm-paymethod').value.trim();
+
+    const headers = [
+      'ลำดับที่*','วันที่เอกสาร','อ้างอิงถึง','ผู้รับเงิน/คู่ค้า','เลขทะเบียน 13 หลัก',
+      'เลขสาขา 5 หลัก','เลขที่ใบกำกับฯ (ถ้ามี)','วันที่ใบกำกับฯ (ถ้ามี)','วันที่บันทึกภาษีซื้อ (ถ้ามี)',
+      'ประเภทราคา','บัญชี','คำอธิบาย','จำนวน','ราคาต่อหน่วย','อัตราภาษี','หัก ณ ที่จ่าย (ถ้ามี)',
+      'ชำระโดย','จำนวนเงินที่ชำระ','ภ.ง.ด. (ถ้ามี)','หมายเหตุ','กลุ่มจัดประเภท'
+    ];
+    const data = [headers];
+    cmState.rows.forEach((r, idx) => {
+      const name = resolveCmName(r);
+      const desc = `${descPrefix} ${name}`.trim();
+      const refFromFile = (r._fname || '').replace(/\.pdf$/i, '');
+      data.push([
+        idx + 1,
+        Number(r.docDate),
+        refFromFile,
+        contact,
+        '',
+        '',
+        '',
+        '',
+        '',
+        3,
+        account,
+        desc,
+        1,
+        r.amount || 0,
+        'NO',
+        0,
+        payMethod,
+        r.amount || 0,
+        '',
+        r.itemsNote || '',
+        ''
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [
+      {wch:9},{wch:13},{wch:14},{wch:16},{wch:18},{wch:14},{wch:22},{wch:20},{wch:20},
+      {wch:11},{wch:8},{wch:48},{wch:7},{wch:13},{wch:10},{wch:18},{wch:10},{wch:17},
+      {wch:13},{wch:40},{wch:14}
+    ];
+    applyNoteWrapText(ws, cmState.rows.length);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Import_Expenses');
+    const now = new Date(); const pad = n => String(n).padStart(2,'0');
+    XLSX.writeFile(wb, `PEAK_ImportExpense_TikTokCommission_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`);
+    confettiBurst();
+    toast(`Export สำเร็จ · ${cmState.rows.length} รายการ`, 'success');
+  });
+
+  /* ====================================================================================
+     ==============  TAB 4: TIKTOK SHOP & THAI HAPPY (TTSTH / THJV / TTSTHCN)  ========
+  ==================================================================================== */
+
+  const ttsState = {
+    zipFile: null,
+    rows: [],
+    errors: [],
+    currentFilter: 'all'
+  };
+
+  function detectTtsType(fname) {
+    if (fname.startsWith('TTSTHCN')) return 'TTSTH-CN';   // Credit Note — skip on export
+    if (fname.startsWith('TTSTH')) return 'TTSTH';         // TikTok Shop TIV
+    if (fname.startsWith('THJV')) return 'THJV';           // Thai Happy Logistics RCT
+    return null;
+  }
+
+  function getTtsConfig(type) {
+    if (type === 'TTSTH' || type === 'TTSTH-CN') return {
+      contact: $('cfg-tts-contact').value.trim(),
+      taxId: $('cfg-tts-taxid').value.trim(),
+      account: $('cfg-tts-account').value.trim(),
+      desc: $('cfg-tts-desc').value.trim()
+    };
+    if (type === 'THJV') return {
+      contact: $('cfg-thj-contact').value.trim(),
+      taxId: $('cfg-thj-taxid').value.trim(),
+      account: $('cfg-thj-account').value.trim(),
+      desc: $('cfg-thj-desc').value.trim()
+    };
+    return {};
+  }
+  function getTtsGlobalConfig() {
+    return {
+      payMethod: $('cfg-tts-paymethod').value.trim(),
+      branch: $('cfg-tts-branch').value.trim() || '00000'
+    };
+  }
+
+  // Dropzone
+  const dzTts = $('dropzone-tts');
+  const fiTts = $('fileInput-tts');
+  ['dragenter','dragover'].forEach(ev => dzTts.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzTts.classList.add('active');
+  }));
+  ['dragleave','drop'].forEach(ev => dzTts.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzTts.classList.remove('active');
+  }));
+  dzTts.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if (file) handleTtsFile(file);
+  });
+  fiTts.addEventListener('change', e => {
+    if (e.target.files[0]) handleTtsFile(e.target.files[0]);
+  });
+
+  function handleTtsFile(file) {
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      toast('ต้องเป็นไฟล์ .zip เท่านั้น', 'error'); return;
+    }
+    ttsState.zipFile = file;
+    dzTts.classList.add('has-file');
+    $('drop-title-tts').textContent = file.name;
+    $('drop-sub-tts').textContent = `${(file.size/1024/1024).toFixed(2)} MB · พร้อมประมวลผล`;
+    $('btn-parse-tts').disabled = false;
+    $('btn-reset-tts').disabled = false;
+  }
+
+  async function parseTtsPdf(buffer, fname, type) {
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    let fullText = '';
+    let lineText = '';
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      fullText += content.items.map(it => it.str).join(' ') + '\n';
+      for (const it of content.items) {
+        lineText += it.str;
+        if (it.hasEOL) lineText += '\n';
+        else lineText += ' ';
+      }
+      lineText += '\n';
+    }
+
+    // Extract date — "Receipt date:", "Invoice date:", or "Credit note date:"
+    const mDate = fullText.match(/(?:Receipt date|Invoice date|Credit note date)\s*[:：]\s*([A-Za-z]+\s+\d+,\s*\d{4})/);
+    const dateStr = mDate ? mDate[1].trim() : null;
+    const docDate = parseReceiptDate(dateStr);
+    if (!docDate) throw new Error('หา Date ไม่เจอ');
+
+    // Extract invoice/receipt/cn number
+    const mNum = fullText.match(/(?:Receipt number|Invoice number|Credit note number)\s*[:：]\s*(\S+)/);
+    const invNum = mNum ? mNum[1].trim() : fname.replace(/\.pdf$/i, '');
+
+    // Extract total amount
+    let total = null;
+    if (type === 'THJV') {
+      // THJV receipts use "Total Amount ฿1,796.00" (no VAT)
+      const m = fullText.match(/Total Amount\s+฿?([\d,]+\.\d+)/);
+      if (m) total = parseFloat(m[1].replace(/,/g, ''));
+    } else {
+      // TTSTH and TTSTH-CN use "Total amount（including VAT） ฿31,379.27"
+      const m = fullText.match(/Total amount.+?including VAT.+?฿?([\d,]+\.\d+)/);
+      if (m) total = parseFloat(m[1].replace(/,/g, ''));
+    }
+    if (total === null || isNaN(total)) throw new Error('อ่านยอดเงินไม่ได้');
+
+    const cfg = getTtsConfig(type);
+    const g = getTtsGlobalConfig();
+
+    // All types prefix invoice number with type (TIV- for TikTok Shop, RCT- for Thai Happy, CN- for credit note)
+    // For export, we follow Shopee pattern: "TIV-<invnum>"
+    let invPrefix = 'TIV';
+    if (type === 'THJV') invPrefix = 'RCT';
+    if (type === 'TTSTH-CN') invPrefix = 'CN';
+    const fullInvNum = `${invPrefix}-${invNum}`;
+
+    return {
+      _type: type, _fname: fname, _error: false, _skip: (type === 'TTSTH-CN'),
+      docDate, refTo: fname.replace(/\.pdf$/i, ''),
+      contact: cfg.contact, taxId: cfg.taxId, branch: g.branch,
+      invoiceNo: type === 'THJV' ? '' : fullInvNum,     // THJV (receipt) doesn't need เลขที่ใบกำกับ
+      invoiceDate: type === 'THJV' ? '' : docDate,
+      taxRecordDate: type === 'THJV' ? '' : docDate,
+      priceType: type === 'THJV' ? 3 : 2,   // 3=ไม่มีภาษี, 2=รวมภาษี
+      account: cfg.account,
+      description: cfg.desc,
+      qty: 1,
+      unitPrice: total,
+      vatRate: type === 'THJV' ? 'NO' : 0.07,
+      wht: 0,
+      payMethod: g.payMethod,
+      paidAmount: total,
+      pgd: '', note: extractLineItemsNote(lineText), category: ''
+    };
+  }
+
+  function buildTtsFallback(fname, type) {
+    // Try to salvage date from filename? Format doesn't contain date directly
+    // Use today as fallback
+    const d = new Date(); const pad = n => String(n).padStart(2, '0');
+    const docDate = `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
+    const cfg = getTtsConfig(type) || {};
+    const g = getTtsGlobalConfig();
+    let invPrefix = 'TIV';
+    if (type === 'THJV') invPrefix = 'RCT';
+    if (type === 'TTSTH-CN') invPrefix = 'CN';
+    const invNum = fname.replace(/\.pdf$/i, '');
+    return {
+      _type: type, _fname: fname, _error: true, _skip: (type === 'TTSTH-CN'),
+      docDate, refTo: fname.replace(/\.pdf$/i, ''),
+      contact: cfg.contact || '', taxId: cfg.taxId || '', branch: g.branch,
+      invoiceNo: type === 'THJV' ? '' : `${invPrefix}-${invNum}`,
+      invoiceDate: type === 'THJV' ? '' : docDate,
+      taxRecordDate: type === 'THJV' ? '' : docDate,
+      priceType: type === 'THJV' ? 3 : 2,
+      account: cfg.account || '',
+      description: cfg.desc || '',
+      qty: 1,
+      unitPrice: 0,
+      vatRate: type === 'THJV' ? 'NO' : 0.07,
+      wht: 0,
+      payMethod: g.payMethod,
+      paidAmount: 0,
+      pgd: '', note: '(ไฟล์อ่านไม่ได้)', category: ''
+    };
+  }
+
+  $('btn-parse-tts').addEventListener('click', async () => {
+    if (!ttsState.zipFile) return;
+    const btnParse = $('btn-parse-tts'), btnReset = $('btn-reset-tts'), btnExport = $('btn-export-tts');
+    btnParse.disabled = true; btnReset.disabled = true; btnExport.disabled = true;
+    ttsState.rows = []; ttsState.errors = [];
+    $('errors-list-tts').classList.remove('show');
+    $('progress-tts').classList.add('show');
+    const pb = $('progress-bar-tts'), pl = $('progress-label-tts'), pc = $('progress-count-tts');
+
+    try {
+      pl.textContent = 'กำลังแตก ZIP…';
+      pb.style.width = '5%';
+
+      const zip = await JSZip.loadAsync(ttsState.zipFile);
+      const pdfFiles = [];
+      const seen = new Set();
+      zip.forEach((path, file) => {
+        if (file.dir || !path.toLowerCase().endsWith('.pdf')) return;
+        const base = path.split('/').pop();
+        // Deduplicate (some ZIPs contain the same file twice)
+        if (seen.has(base)) return;
+        seen.add(base);
+        pdfFiles.push({ base, file });
+      });
+      if (pdfFiles.length === 0) {
+        toast('ไม่พบ PDF ใน ZIP', 'error');
+        $('progress-tts').classList.remove('show');
+        pb.style.width = '0%';
+        btnParse.disabled = false; btnReset.disabled = false;
+        return;
+      }
+
+      pc.textContent = `0 / ${pdfFiles.length}`;
+      pl.textContent = 'กำลังอ่าน PDF…';
+
+      for (let i = 0; i < pdfFiles.length; i++) {
+        const { base, file } = pdfFiles[i];
+        const type = detectTtsType(base);
+        if (!type) {
+          ttsState.errors.push(`${base} · ไม่รู้จักประเภท (ต้องขึ้นต้นด้วย TTSTH / TTSTHCN / THJV)`);
+        } else {
+          try {
+            const buffer = await file.async('arraybuffer');
+            const row = await parseTtsPdf(buffer, base, type);
+            ttsState.rows.push(row);
+          } catch (err) {
+            ttsState.errors.push(`${base} · ${err.message || err}`);
+            const fb = buildTtsFallback(base, type);
+            if (fb) ttsState.rows.push(fb);
+          }
+        }
+        const pct = 5 + Math.round(90 * (i + 1) / pdfFiles.length);
+        pb.style.width = pct + '%';
+        pc.textContent = `${i + 1} / ${pdfFiles.length}`;
+      }
+
+      // Sort: TTSTH first, THJV second, TTSTH-CN last — all by date
+      const order = { 'TTSTH': 1, 'THJV': 2, 'TTSTH-CN': 3 };
+      ttsState.rows.sort((a, b) => {
+        const t = (order[a._type] || 9) - (order[b._type] || 9);
+        if (t !== 0) return t;
+        return a.docDate.localeCompare(b.docDate);
+      });
+
+      pb.style.width = '100%';
+      pl.textContent = 'เสร็จสิ้น';
+      setTimeout(() => {
+        $('progress-tts').classList.remove('show');
+        pb.style.width = '0%';
+      }, 600);
+
+      renderTtsResults();
+      if (ttsState.errors.length > 0) {
+        const ul = $('errors-list-ul-tts'); ul.innerHTML = '';
+        ttsState.errors.forEach(e => {
+          const li = document.createElement('li'); li.textContent = e; ul.appendChild(li);
+        });
+        $('errors-list-tts').classList.add('show');
+        toast(`ประมวลผลสำเร็จ · ${ttsState.rows.length} รายการ · ข้อผิดพลาด ${ttsState.errors.length}`, 'warn');
+      } else {
+        const skipCount = ttsState.rows.filter(r => r._skip).length;
+        const exportCount = ttsState.rows.length - skipCount;
+        const msg = skipCount > 0
+          ? `ประมวลผลสำเร็จ · ${exportCount} รายการ · ข้าม CN ${skipCount} รายการ`
+          : `ประมวลผลสำเร็จ · ${ttsState.rows.length} รายการ`;
+        toast(msg, 'success');
+      }
+      btnParse.disabled = false;
+      btnReset.disabled = false;
+      const exportable = ttsState.rows.filter(r => !r._skip).length;
+      btnExport.disabled = exportable === 0;
+    } catch (err) {
+      console.error(err);
+      toast('ผิดพลาด: ' + err.message, 'error');
+      $('progress-tts').classList.remove('show');
+      pb.style.width = '0%';
+      btnParse.disabled = false; btnReset.disabled = false;
+    }
+  });
+
+  function renderTtsResults() {
+    $('empty-tts').style.display = 'none';
+    $('results-tts').style.display = 'block';
+    const c = { total: 0, tts: 0, thj: 0, cn: 0 };
+    ttsState.rows.forEach(r => {
+      c.total++;
+      if (r._type === 'TTSTH') c.tts++;
+      else if (r._type === 'THJV') c.thj++;
+      else if (r._type === 'TTSTH-CN') c.cn++;
+    });
+    setStatNumber($('stat-total-tts'), (c.total - c.cn), { unit: '<span class="unit"> rows</span>' });
+    setStatNumber($('stat-tts-count'), c.tts);
+    setStatNumber($('stat-thj-count'), c.thj);
+    setStatNumber($('stat-cn-count'), c.cn);
+    renderTtsTable();
+  }
+
+  function renderTtsTable() {
+    const tbody = $('preview-body-tts');
+    tbody.innerHTML = '';
+    const filtered = ttsState.currentFilter === 'all'
+      ? ttsState.rows
+      : ttsState.rows.filter(r => r._type === ttsState.currentFilter);
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
+      return;
+    }
+    const tagMap = {
+      'TTSTH': '<span class="tag-type tts">TIKTOK SHOP</span>',
+      'THJV': '<span class="tag-type thj">THAI HAPPY</span>',
+      'TTSTH-CN': '<span class="tag-type cn">CREDIT NOTE</span>'
+    };
+    // For display, use row number within rendered set (seq column shown)
+    let seq = 0;
+    filtered.forEach(r => {
+      const tr = document.createElement('tr');
+      if (r._error) tr.classList.add('row-error');
+      if (r._skip) tr.classList.add('row-skip');
+      // Only exported rows get sequence numbers
+      let seqDisplay = '—';
+      if (!r._skip) { seq++; seqDisplay = String(seq); }
+      const d = `${r.docDate.slice(0,4)}-${r.docDate.slice(4,6)}-${r.docDate.slice(6,8)}`;
+      const eb = r._error ? '<span class="tag-err">ERR</span>' : '';
+      const sb = r._skip ? '<span class="tag-type skip">SKIP</span>' : '';
+      tr.innerHTML = `
+        <td class="td-num">${seqDisplay}</td>
+        <td class="td-mono">${d}</td>
+        <td>${tagMap[r._type] || ''}${eb}${sb}</td>
+        <td class="td-mono">${r.contact || '—'}</td>
+        <td class="td-mono">${r.invoiceNo || '—'}</td>
+        <td class="td-mono">${r.account || '—'}</td>
+        <td>${r.description || ''}</td>
+        <td class="td-mono">${r.vatRate === 'NO' ? 'NO' : (r.vatRate*100).toFixed(0)+'%'}</td>
+        <td class="td-amount">${(r.paidAmount || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  document.querySelectorAll('#filters-tts .filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#filters-tts .filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      ttsState.currentFilter = btn.dataset.filter;
+      renderTtsTable();
+    });
+  });
+
+  $('btn-reset-tts').addEventListener('click', () => {
+    ttsState.zipFile = null; ttsState.rows = []; ttsState.errors = [];
+    ttsState.currentFilter = 'all';
+    fiTts.value = '';
+    dzTts.classList.remove('has-file');
+    $('drop-title-tts').textContent = 'คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่';
+    $('drop-sub-tts').textContent = 'รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)';
+    $('btn-parse-tts').disabled = true;
+    $('btn-export-tts').disabled = true;
+    $('btn-reset-tts').disabled = true;
+    $('results-tts').style.display = 'none';
+    $('empty-tts').style.display = 'block';
+    $('errors-list-tts').classList.remove('show');
+    document.querySelectorAll('#filters-tts .filter-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.filter === 'all'));
+    toast('รีเซ็ตเรียบร้อย');
+  });
+
+  $('btn-export-tts').addEventListener('click', () => {
+    // Skip credit notes
+    const exportable = ttsState.rows.filter(r => !r._skip);
+    if (exportable.length === 0) {
+      toast('ไม่มีข้อมูลสำหรับ export', 'warn');
+      return;
+    }
+    const headers = [
+      'ลำดับที่*','วันที่เอกสาร','อ้างอิงถึง','ผู้รับเงิน/คู่ค้า','เลขทะเบียน 13 หลัก',
+      'เลขสาขา 5 หลัก','เลขที่ใบกำกับฯ (ถ้ามี)','วันที่ใบกำกับฯ (ถ้ามี)','วันที่บันทึกภาษีซื้อ (ถ้ามี)',
+      'ประเภทราคา','บัญชี','คำอธิบาย','จำนวน','ราคาต่อหน่วย','อัตราภาษี','หัก ณ ที่จ่าย (ถ้ามี)',
+      'ชำระโดย','จำนวนเงินที่ชำระ','ภ.ง.ด. (ถ้ามี)','หมายเหตุ','กลุ่มจัดประเภท'
+    ];
+    const data = [headers];
+    exportable.forEach((r, idx) => {
+      data.push([
+        idx + 1,
+        Number(r.docDate),
+        r.refTo || '',
+        r.contact,
+        r.taxId,
+        r.branch,
+        r.invoiceNo || '',
+        r.invoiceDate ? Number(r.invoiceDate) : '',
+        r.taxRecordDate ? Number(r.taxRecordDate) : '',
+        r.priceType,
+        r.account,
+        r.description,
+        r.qty,
+        r.unitPrice,
+        r.vatRate,
+        r.wht,
+        r.payMethod,
+        r.paidAmount,
+        r.pgd || '',
+        r.note || '',
+        r.category || ''
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [
+      {wch:9},{wch:13},{wch:14},{wch:16},{wch:18},{wch:14},{wch:32},{wch:20},{wch:20},
+      {wch:11},{wch:8},{wch:22},{wch:7},{wch:13},{wch:10},{wch:18},{wch:10},{wch:17},
+      {wch:13},{wch:50},{wch:14}
+    ];
+    applyNoteWrapText(ws, exportable.length);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Import_Expenses');
+    const now = new Date(); const pad = n => String(n).padStart(2,'0');
+    XLSX.writeFile(wb, `PEAK_ImportExpense_TikTokShop_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`);
+    confettiBurst();
+    toast(`Export สำเร็จ · ${exportable.length} รายการ`, 'success');
+  });
+
+</script>
+</body>
+</html>    overflow-x: hidden;
+  }
+
+  /* ==================== ANIMATED BACKGROUND ==================== */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: radial-gradient(circle at 1px 1px, rgba(0,0,0,0.025) 1px, transparent 0);
+    background-size: 24px 24px;
+    z-index: -2;
+    pointer-events: none;
+    animation: dotDrift 60s linear infinite;
+  }
+  @keyframes dotDrift {
+    0% { background-position: 0 0; }
+    100% { background-position: 240px 240px; }
+  }
+
+  /* Floating color blobs in background */
+  .bg-blobs {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .bg-blob {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.25;
+    will-change: transform;
+  }
+  .bg-blob-1 {
+    width: 480px; height: 480px;
+    background: radial-gradient(circle, var(--shopee) 0%, transparent 70%);
+    top: -100px; left: -100px;
+    animation: blobFloat1 25s ease-in-out infinite;
+  }
+  .bg-blob-2 {
+    width: 520px; height: 520px;
+    background: radial-gradient(circle, var(--tts) 0%, transparent 70%);
+    top: 40%; right: -150px;
+    animation: blobFloat2 30s ease-in-out infinite;
+  }
+  .bg-blob-3 {
+    width: 420px; height: 420px;
+    background: radial-gradient(circle, var(--accent) 0%, transparent 70%);
+    bottom: -100px; left: 30%;
+    animation: blobFloat3 35s ease-in-out infinite;
+  }
+  @keyframes blobFloat1 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    33% { transform: translate(80px, 60px) scale(1.15); }
+    66% { transform: translate(-40px, 120px) scale(0.9); }
+  }
+  @keyframes blobFloat2 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(-120px, -80px) scale(1.2); }
+  }
+  @keyframes blobFloat3 {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    40% { transform: translate(60px, -80px) scale(0.85); }
+    80% { transform: translate(-80px, 40px) scale(1.1); }
+  }
+
+  /* Custom cursor */
+  .cursor-dot {
+    position: fixed;
+    width: 6px; height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 9999;
+    transform: translate(-50%, -50%);
+    transition: transform 0.1s, background 0.25s, width 0.25s, height 0.25s;
+    mix-blend-mode: difference;
+  }
+  .cursor-ring {
+    position: fixed;
+    width: 32px; height: 32px;
+    border: 1.5px solid rgba(0,113,227,0.4);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 9998;
+    transform: translate(-50%, -50%);
+    transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2), width 0.25s, height 0.25s, border-color 0.25s;
+  }
+  .cursor-ring.hover {
+    width: 48px; height: 48px;
+    border-color: var(--accent);
+    border-width: 2px;
+  }
+  .cursor-ring.click {
+    width: 24px; height: 24px;
+    border-color: var(--success);
+  }
+  @media (max-width: 768px), (pointer: coarse) {
+    .cursor-dot, .cursor-ring { display: none !important; }
+  }
+
+  .topnav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(255,255,255,0.75);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--border);
+    animation: slideDown 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+  @keyframes slideDown {
+    from { transform: translateY(-100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  .topnav-inner {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 12px;
+    cursor: default;
+  }
+  .brand:hover .brand-logo {
+    transform: rotate(-5deg) scale(1.1);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 6px 16px rgba(0,0,0,0.25);
+  }
+  .brand-logo {
+    width: 34px; height: 34px; border-radius: 9px;
+    background: linear-gradient(135deg, #1d1d1f 0%, #3a3a3c 100%);
+    display: grid; place-items: center;
+    color: #fff;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 15px;
+    letter-spacing: -0.03em;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.15), 0 2px 6px rgba(0,0,0,0.15);
+    transition: all 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+    position: relative;
+    overflow: hidden;
+  }
+  .brand-logo::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.3) 50%, transparent 70%);
+    transform: translateX(-100%);
+  }
+  .brand:hover .brand-logo::after {
+    animation: shimmer 0.8s ease;
+  }
+  @keyframes shimmer {
+    to { transform: translateX(100%); }
+  }
+  .brand-text {
+    display: flex; flex-direction: column; line-height: 1.1;
+  }
+  .brand-name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+  .brand-sub {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .topnav-actions {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-2);
+    transition: all 0.2s ease;
+  }
+  .pill:hover {
+    border-color: var(--success);
+    background: var(--success-soft);
+    transform: translateY(-1px);
+  }
+  .pill-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success);
+    animation: pulse 2s ease-in-out infinite;
+    box-shadow: 0 0 0 0 var(--success);
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(48, 164, 108, 0.5); }
+    50% { box-shadow: 0 0 0 6px rgba(48, 164, 108, 0); }
+  }
+
+  /* TABS */
+  .tabs-bar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 63px; z-index: 99;
+    backdrop-filter: saturate(180%) blur(20px);
+    background: rgba(255,255,255,0.85);
+    animation: slideDown 0.6s 0.1s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+  .tabs-inner {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    gap: 2px;
+    position: relative;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs-inner::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 14px 6px;
+    margin-right: 24px;
+    font-family: var(--font-thai);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-3);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.3s ease, transform 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    top: 1px;
+    white-space: nowrap;
+  }
+  .tab-btn:hover {
+    color: var(--text-2);
+    transform: translateY(-1px);
+  }
+  .tab-btn:hover .tab-ico {
+    transform: rotate(-8deg) scale(1.1);
+  }
+  .tab-btn.active {
+    color: var(--text);
+  }
+  /* Animated underline for active tab */
+  .tab-indicator {
+    position: absolute;
+    bottom: -1px;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--tiktok-red), var(--shopee));
+    background-size: 200% 100%;
+    border-radius: 2px 2px 0 0;
+    transition: left 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2), width 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+    animation: gradientShift 3s linear infinite;
+    pointer-events: none;
+  }
+  @keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+  .tab-btn .tab-ico {
+    width: 18px; height: 18px;
+    display: grid; place-items: center;
+    border-radius: 5px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  .tab-btn .tab-ico.shopee-spx {
+    background: linear-gradient(135deg, var(--shopee) 0%, var(--spx-rct) 100%);
+    color: #fff;
+  }
+  .tab-btn .tab-ico.tiktok {
+    background: #000;
+    color: var(--tiktok-accent);
+  }
+  .tab-btn .tab-ico.commission {
+    background: linear-gradient(135deg, var(--commission) 0%, var(--tiktok-red) 100%);
+    color: #fff;
+  }
+  .tab-btn .tab-ico.tts {
+    background: linear-gradient(135deg, var(--tts) 0%, var(--thj) 100%);
+    color: #fff;
+  }
+  .tab-pane { display: none; }
+  .tab-pane.active {
+    display: block;
+    animation: tabFadeIn 0.5s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+  }
+  @keyframes tabFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  main {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+  }
+
+  /* Hero */
+  .hero {
+    margin-bottom: 28px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .hero-title {
+    font-family: var(--font-display);
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+    animation: fadeSlideUp 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+  .hero-title .mono {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 0.7em;
+    color: var(--text-3);
+    margin-left: 8px;
+    letter-spacing: 0;
+    display: inline-block;
+    animation: fadeSlideUp 0.7s 0.15s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+  .hero-desc {
+    margin-top: 8px;
+    color: var(--text-2);
+    font-size: 14.5px;
+    max-width: 680px;
+    animation: fadeSlideUp 0.6s 0.1s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+  @keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateY(18px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .steps {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    animation: fadeSlideUp 0.6s 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+  .steps span:not(.chev) {
+    transition: color 0.2s ease, transform 0.2s ease;
+    cursor: default;
+  }
+  .steps span:not(.chev):hover {
+    color: var(--accent);
+    transform: translateY(-1px);
+  }
+  .steps .chev {
+    opacity: 0.4;
+    animation: chevPulse 2.5s ease-in-out infinite;
+  }
+  .steps .chev:nth-child(4) {
+    animation-delay: 0.4s;
+  }
+  @keyframes chevPulse {
+    0%, 100% { opacity: 0.3; transform: translateX(0); }
+    50% { opacity: 0.8; transform: translateX(2px); }
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2), box-shadow 0.3s ease, border-color 0.3s ease;
+    animation: cardEntry 0.7s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+    position: relative;
+  }
+  .grid .card:nth-child(1) { animation-delay: 0.15s; }
+  .grid .card:nth-child(2) { animation-delay: 0.25s; }
+  @keyframes cardEntry {
+    from {
+      opacity: 0;
+      transform: translateY(24px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 32px rgba(0,0,0,0.08);
+    border-color: var(--border-strong);
+  }
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+    gap: 12px;
+  }
+  .card-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: -0.01em;
+  }
+  .card-sub {
+    font-size: 12.5px;
+    color: var(--text-2);
+    margin-top: 3px;
+  }
+  .card-badge {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-weight: 500;
+    background: var(--surface-2);
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+  }
+  .card:hover .card-badge {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  /* Dropzone */
+  .dropzone {
+    position: relative;
+    border: 2px dashed var(--border-strong);
+    border-radius: var(--radius);
+    padding: 36px 24px;
+    text-align: center;
+    background: var(--surface-2);
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.2, 0.9, 0.3, 1);
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    overflow: hidden;
+  }
+  .dropzone::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: var(--radius);
+    background: conic-gradient(from 0deg, transparent 0%, var(--accent) 15%, transparent 30%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: 0;
+    animation: rotate 3s linear infinite;
+  }
+  @keyframes rotate {
+    to { transform: rotate(360deg); }
+  }
+  .dropzone:hover::before, .dropzone.active::before { opacity: 1; }
+  .dropzone > * {
+    position: relative;
+    z-index: 1;
+  }
+  .dropzone::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    background: var(--surface-2);
+    border-radius: calc(var(--radius) - 2px);
+    z-index: 0;
+    transition: background 0.3s ease;
+  }
+  .dropzone:hover {
+    border-color: var(--accent);
+    transform: scale(1.005);
+  }
+  .dropzone:hover::after {
+    background: var(--accent-soft);
+  }
+  .dropzone.active {
+    border-color: var(--accent);
+    transform: scale(1.02);
+  }
+  .dropzone.active::after {
+    background: var(--accent-soft);
+  }
+  .dropzone.has-file {
+    border-style: solid;
+    border-color: var(--success);
+  }
+  .dropzone.has-file::after {
+    background: var(--success-soft);
+  }
+  .dropzone.has-file::before { opacity: 0; }
+  .dropzone input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    z-index: 2;
+  }
+  .drop-icon {
+    width: 44px; height: 44px;
+    display: grid; place-items: center;
+    background: var(--surface);
+    border-radius: 12px;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2), box-shadow 0.3s ease;
+  }
+  .dropzone:hover .drop-icon {
+    transform: translateY(-3px) rotate(-5deg);
+    box-shadow: 0 8px 20px rgba(0, 113, 227, 0.2);
+  }
+  .dropzone.active .drop-icon {
+    animation: bounce 0.8s ease infinite;
+  }
+  .dropzone.has-file .drop-icon {
+    animation: successPop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.4);
+    box-shadow: 0 6px 16px rgba(48, 164, 108, 0.25);
+  }
+  @keyframes bounce {
+    0%, 100% { transform: translateY(-3px); }
+    50% { transform: translateY(-10px); }
+  }
+  @keyframes successPop {
+    0% { transform: scale(0.7) rotate(-10deg); }
+    60% { transform: scale(1.15) rotate(5deg); }
+    100% { transform: scale(1) rotate(0); }
+  }
+  .drop-icon svg { width: 22px; height: 22px; }
+  .drop-title {
+    font-weight: 600;
+    font-size: 15px;
+    transition: color 0.2s ease;
+  }
+  .dropzone:hover .drop-title { color: var(--accent); }
+  .dropzone.has-file .drop-title { color: var(--success); }
+  .drop-sub {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-3);
+    letter-spacing: 0.02em;
+  }
+
+  /* Config */
+  .config-row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    transition: padding 0.2s ease;
+  }
+  .config-row:hover {
+    padding-left: 4px;
+  }
+  .config-row:last-child { border-bottom: none; }
+  .config-label {
+    font-size: 13px;
+    color: var(--text-2);
+    font-weight: 500;
+    transition: color 0.2s ease;
+  }
+  .config-row:hover .config-label {
+    color: var(--text);
+  }
+  .config-input, .config-select {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    transition: all 0.25s cubic-bezier(0.2, 0.9, 0.3, 1);
+    width: 100%;
+  }
+  .config-input:hover, .config-select:hover {
+    border-color: var(--border-strong);
+  }
+  .config-input:focus, .config-select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+    transform: translateY(-1px);
+  }
+  .config-group {
+    margin-bottom: 14px;
+    animation: configGroupIn 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+  .config-group:nth-child(2) { animation-delay: 0.05s; }
+  .config-group:nth-child(3) { animation-delay: 0.1s; }
+  .config-group:nth-child(4) { animation-delay: 0.15s; }
+  @keyframes configGroupIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  .config-group-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .config-group-title .tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 9.5px;
+  }
+  .config-group-title .tag.shopee { background: var(--shopee-soft); color: var(--shopee); }
+  .config-group-title .tag.spx-tiv { background: var(--spx-tiv-soft); color: var(--spx-tiv); }
+  .config-group-title .tag.spx-rct { background: var(--spx-rct-soft); color: var(--spx-rct); }
+  .config-group-title .tag.tiktok { background: #000; color: var(--tiktok-accent); }
+  .config-group-title .tag.tax { background: var(--warn-soft); color: var(--warn); }
+  .config-group-title .tag.commission { background: var(--commission-soft); color: var(--commission-accent); }
+  .config-group-title .tag.tts { background: var(--tts-soft); color: var(--tts); }
+  .config-group-title .tag.thj { background: var(--thj-soft); color: var(--thj); }
+
+  /* Method mapping editor */
+  .method-map {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .method-map-row {
+    display: grid;
+    grid-template-columns: 1fr 120px 32px;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    animation: rowIn 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+  }
+  .method-map-row:last-child { border-bottom: none; }
+  .method-map-row input {
+    border: none;
+    padding: 9px 12px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    background: var(--surface);
+    color: var(--text);
+    border-right: 1px solid var(--border);
+    transition: background 0.2s ease;
+  }
+  .method-map-row input:last-of-type { border-right: none; }
+  .method-map-row input:focus {
+    outline: none;
+    background: var(--accent-soft);
+  }
+  .method-map-del {
+    display: grid; place-items: center;
+    color: var(--text-3);
+    cursor: pointer;
+    background: var(--surface-2);
+    border: none;
+    font-size: 14px;
+    transition: all 0.2s ease;
+  }
+  .method-map-del:hover {
+    color: var(--danger);
+    background: var(--danger-soft);
+    transform: scale(1.1);
+  }
+  .method-map-del:active {
+    transform: scale(0.9);
+  }
+  .method-add-btn {
+    width: 100%;
+    padding: 8px;
+    background: var(--surface-2);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-2);
+    cursor: pointer;
+    margin-top: 8px;
+    transition: all 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  .method-add-btn:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+    transform: translateY(-1px);
+    border-style: solid;
+  }
+  .method-add-btn:active {
+    transform: translateY(0) scale(0.98);
+  }
+  .method-help {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  /* Actions */
+  .actions {
+    display: flex; gap: 10px; flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: 10px;
+    font-family: var(--font-thai);
+    font-weight: 600;
+    font-size: 14px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: transform 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.2), background 0.2s ease, box-shadow 0.25s ease, border-color 0.2s ease;
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--border);
+    position: relative;
+    overflow: hidden;
+    will-change: transform;
+  }
+  .btn::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 0; height: 0;
+    background: rgba(255,255,255,0.4);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    transition: width 0.5s ease, height 0.5s ease;
+    pointer-events: none;
+  }
+  .btn:active::before {
+    width: 400px; height: 400px;
+    transition: width 0s, height 0s;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--surface-2);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+  }
+  .btn:active:not(:disabled) {
+    transform: translateY(0) scale(0.98);
+    transition-duration: 0.1s;
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px rgba(0, 113, 227, 0.2);
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    box-shadow: 0 8px 20px rgba(0, 113, 227, 0.35);
+  }
+  .btn-success {
+    background: var(--success);
+    color: #fff;
+    border-color: var(--success);
+    box-shadow: 0 2px 8px rgba(48, 164, 108, 0.2);
+  }
+  .btn-success:hover:not(:disabled) {
+    background: #2b9160;
+    border-color: #2b9160;
+    box-shadow: 0 8px 20px rgba(48, 164, 108, 0.35);
+  }
+  .btn:hover:not(:disabled) svg {
+    animation: iconWobble 0.6s ease;
+  }
+  @keyframes iconWobble {
+    0%, 100% { transform: rotate(0); }
+    25% { transform: rotate(-8deg) scale(1.1); }
+    75% { transform: rotate(8deg) scale(1.1); }
+  }
+  .btn svg { width: 16px; height: 16px; transition: transform 0.3s ease; }
+
+  /* Progress */
+  .progress {
+    margin-top: 18px;
+    background: var(--surface-2);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    display: none;
+  }
+  .progress.show {
+    display: block;
+    animation: progressIn 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  @keyframes progressIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .progress-bar-wrap {
+    height: 6px;
+    background: var(--border);
+    border-radius: 999px;
+    overflow: hidden;
+    margin-top: 8px;
+    position: relative;
+  }
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #5b9dff, var(--accent));
+    background-size: 200% 100%;
+    width: 0%;
+    transition: width 0.3s ease;
+    border-radius: 999px;
+    position: relative;
+    animation: progressGradient 2s linear infinite;
+  }
+  .progress-bar::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.5) 50%, transparent 100%);
+    animation: progressShimmer 1.5s ease-in-out infinite;
+  }
+  @keyframes progressGradient {
+    0% { background-position: 0% 0%; }
+    100% { background-position: 200% 0%; }
+  }
+  @keyframes progressShimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+  .progress-text {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-2);
+    display: flex;
+    justify-content: space-between;
+  }
+  .progress-text span:last-child {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  /* Summary */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 700px) {
+    .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  .stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    transition: all 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+    animation: statIn 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+    position: relative;
+    overflow: hidden;
+  }
+  .summary-grid .stat:nth-child(1) { animation-delay: 0s; }
+  .summary-grid .stat:nth-child(2) { animation-delay: 0.08s; }
+  .summary-grid .stat:nth-child(3) { animation-delay: 0.16s; }
+  .summary-grid .stat:nth-child(4) { animation-delay: 0.24s; }
+  @keyframes statIn {
+    from {
+      opacity: 0;
+      transform: translateY(16px) scale(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .stat:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 24px rgba(0,0,0,0.08);
+  }
+  .stat::before {
+    content: '';
+    position: absolute;
+    top: 0; right: 0;
+    width: 80px; height: 80px;
+    background: radial-gradient(circle, rgba(0, 113, 227, 0.05) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .stat:hover::before { opacity: 1; }
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 500;
+  }
+  .stat-value {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-top: 4px;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+    transition: color 0.3s ease;
+  }
+  .stat:hover .stat-value { color: var(--accent); }
+  .stat-value .unit {
+    font-size: 12px;
+    color: var(--text-3);
+    font-weight: 500;
+    margin-left: 2px;
+  }
+  .stat.shopee { border-left: 3px solid var(--shopee); }
+  .stat.spx-rct { border-left: 3px solid var(--spx-rct); }
+  .stat.spx-tiv { border-left: 3px solid var(--spx-tiv); }
+  .stat.tiktok { border-left: 3px solid var(--tiktok-red); }
+  .stat.tax { border-left: 3px solid var(--warn); }
+  .stat.commission { border-left: 3px solid var(--commission); }
+  .stat.tts { border-left: 3px solid var(--tts); }
+  .stat.thj { border-left: 3px solid var(--thj); }
+  .stat.cn { border-left: 3px solid var(--cn); }
+  .stat-value.danger { color: var(--danger); }
+  .stat-value.warn { color: var(--warn); }
+
+  /* Table */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+    animation: cardEntry 0.6s 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+    transition: box-shadow 0.3s ease;
+  }
+  .table-wrap:hover {
+    box-shadow: 0 10px 28px rgba(0,0,0,0.08);
+  }
+  .table-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .table-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+  }
+  .table-filters {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .filter-btn {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-2);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+    font-weight: 500;
+    position: relative;
+    overflow: hidden;
+  }
+  .filter-btn:hover {
+    background: var(--surface-2);
+    transform: translateY(-1px);
+    border-color: var(--border-strong);
+  }
+  .filter-btn:active { transform: translateY(0) scale(0.95); }
+  .filter-btn.active {
+    background: var(--text);
+    color: #fff;
+    border-color: var(--text);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .table-scroll {
+    overflow-x: auto;
+    max-height: 560px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+  }
+  thead {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--surface-2);
+  }
+  thead th {
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    font-family: var(--font-mono);
+  }
+  tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    vertical-align: middle;
+    transition: background 0.15s ease;
+  }
+  tbody tr {
+    animation: rowIn 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+    transition: background 0.2s ease, transform 0.2s ease;
+  }
+  tbody tr:nth-child(1) { animation-delay: 0.02s; }
+  tbody tr:nth-child(2) { animation-delay: 0.04s; }
+  tbody tr:nth-child(3) { animation-delay: 0.06s; }
+  tbody tr:nth-child(4) { animation-delay: 0.08s; }
+  tbody tr:nth-child(5) { animation-delay: 0.10s; }
+  tbody tr:nth-child(6) { animation-delay: 0.12s; }
+  tbody tr:nth-child(7) { animation-delay: 0.14s; }
+  tbody tr:nth-child(8) { animation-delay: 0.16s; }
+  tbody tr:nth-child(9) { animation-delay: 0.18s; }
+  tbody tr:nth-child(10) { animation-delay: 0.20s; }
+  tbody tr:nth-child(n+11) { animation-delay: 0.22s; }
+  @keyframes rowIn {
+    from {
+      opacity: 0;
+      transform: translateX(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+  tbody tr:hover {
+    background: var(--surface-2);
+    transform: translateX(2px);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  .td-num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-2);
+  }
+  .td-mono {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+  }
+  .td-amount {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    text-align: right;
+  }
+  .td-amount.neg { color: var(--danger); }
+  .td-desc-sm {
+    font-size: 11.5px;
+    color: var(--text-2);
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tag-type {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 3px 7px;
+    border-radius: 4px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    transition: transform 0.2s ease;
+  }
+  tbody tr:hover .tag-type {
+    transform: scale(1.08);
+  }
+  .tag-type.shopee { background: var(--shopee-soft); color: var(--shopee); }
+  .tag-type.spx-rct { background: var(--spx-rct-soft); color: var(--spx-rct); }
+  .tag-type.spx-tiv { background: var(--spx-tiv-soft); color: var(--spx-tiv); }
+  .tag-type.tiktok { background: #000; color: var(--tiktok-accent); }
+  .tag-type.pp36 { background: var(--warn-soft); color: var(--warn); }
+  .tag-type.pp36-neg { background: var(--danger-soft); color: var(--danger); }
+  .tag-type.commission { background: var(--commission-soft); color: var(--commission-accent); }
+  .tag-type.tts { background: var(--tts-soft); color: var(--tts); }
+  .tag-type.thj { background: var(--thj-soft); color: var(--thj); }
+  .tag-type.cn { background: var(--cn-soft); color: var(--cn); }
+  .tag-type.skip {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    padding: 2px 6px;
+    margin-left: 4px;
+    border-radius: 4px;
+    font-weight: 600;
+    background: var(--cn-soft);
+    color: var(--cn);
+    letter-spacing: 0.04em;
+  }
+  tr.row-skip td {
+    opacity: 0.55;
+    font-style: italic;
+  }
+  .tag-err {
+    display: inline-flex; align-items: center;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    padding: 2px 6px;
+    margin-left: 4px;
+    border-radius: 4px;
+    font-weight: 600;
+    background: var(--danger-soft);
+    color: var(--danger);
+    letter-spacing: 0.04em;
+  }
+  tr.row-error td { background: var(--danger-soft) !important; }
+  tr.row-error:hover td { background: #ffd9d5 !important; }
+  tr.row-pp36 td { background: var(--warn-soft); }
+  tr.row-pp36:hover td { background: #ffe8c2; }
+  tr.row-pp36-neg td { background: var(--danger-soft); }
+  tr.row-pp36-neg:hover td { background: #ffd9d5; }
+
+  .empty-state {
+    padding: 64px 24px;
+    text-align: center;
+    color: var(--text-3);
+  }
+  .empty-state-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 15px;
+    color: var(--text-2);
+    margin-bottom: 4px;
+  }
+
+  /* Empty state emoji float */
+  [id^="empty-"] > div:first-child {
+    animation: floatEmoji 3s ease-in-out infinite;
+  }
+  @keyframes floatEmoji {
+    0%, 100% { transform: translateY(0) rotate(0); }
+    50% { transform: translateY(-8px) rotate(3deg); }
+  }
+
+  /* Toast */
+  .toast-container {
+    position: fixed;
+    top: 24px; right: 24px;
+    display: flex; flex-direction: column; gap: 8px;
+    z-index: 200;
+  }
+  .toast {
+    background: var(--text);
+    color: #fff;
+    padding: 12px 18px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: var(--shadow-lg);
+    animation: toastIn 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.4);
+    max-width: 340px;
+    position: relative;
+    overflow: hidden;
+  }
+  .toast.success {
+    background: var(--success);
+    box-shadow: 0 20px 48px rgba(48, 164, 108, 0.35);
+  }
+  .toast.error {
+    background: var(--danger);
+    box-shadow: 0 20px 48px rgba(255, 59, 48, 0.35);
+  }
+  .toast.warn {
+    background: var(--warn);
+    box-shadow: 0 20px 48px rgba(255, 149, 0, 0.35);
+  }
+  .toast::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 2px;
+    background: rgba(255,255,255,0.5);
+    animation: toastProgress 3s linear;
+  }
+  @keyframes toastIn {
+    0% {
+      transform: translateX(120%) scale(0.9);
+      opacity: 0;
+    }
+    60% {
+      transform: translateX(-8px) scale(1.02);
+      opacity: 1;
+    }
+    100% {
+      transform: translateX(0) scale(1);
+      opacity: 1;
+    }
+  }
+  @keyframes toastProgress {
+    from { width: 100%; }
+    to { width: 0%; }
+  }
+  .toast.toast-out {
+    animation: toastOut 0.3s cubic-bezier(0.4, 0, 1, 1) forwards;
+  }
+  @keyframes toastOut {
+    to {
+      transform: translateX(120%);
+      opacity: 0;
+    }
+  }
+
+  .errors-list {
+    margin-top: 12px;
+    background: var(--danger-soft);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    display: none;
+  }
+  .errors-list.show {
+    display: block;
+    animation: errorsIn 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  @keyframes errorsIn {
+    from {
+      opacity: 0;
+      transform: translateY(-8px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  .errors-list-title {
+    font-weight: 600;
+    color: var(--danger);
+    font-size: 13px;
+    margin-bottom: 6px;
+    font-family: var(--font-display);
+  }
+  .errors-list ul {
+    list-style: none; padding: 0; margin: 0;
+    max-height: 140px; overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  .errors-list li {
+    padding: 3px 0;
+    color: var(--text-2);
+    animation: rowIn 0.3s ease both;
+  }
+
+  /* Footer */
+  footer {
+    margin-top: 40px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-3);
+    text-align: center;
+    letter-spacing: 0.02em;
+    transition: color 0.3s ease, letter-spacing 0.4s ease;
+    cursor: default;
+  }
+  footer:hover {
+    color: var(--accent);
+    letter-spacing: 0.1em;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+    border: 2px solid var(--bg);
+    transition: background 0.2s ease;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-3);
+  }
+
+  /* Utility classes */
+  .stat-value-updating {
+    animation: valueUpdate 0.6s cubic-bezier(0.2, 0.9, 0.3, 1.4);
+  }
+  @keyframes valueUpdate {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.15); color: var(--accent); }
+    100% { transform: scale(1); }
+  }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- Animated background blobs -->
+<div class="bg-blobs">
+  <div class="bg-blob bg-blob-1"></div>
+  <div class="bg-blob bg-blob-2"></div>
+  <div class="bg-blob bg-blob-3"></div>
+</div>
+
+<!-- Custom cursor -->
+<div class="cursor-dot" id="cursor-dot"></div>
+<div class="cursor-ring" id="cursor-ring"></div>
+
+<nav class="topnav">
+  <div class="topnav-inner">
+    <div class="brand">
+      <div class="brand-logo">P</div>
+      <div class="brand-text">
+        <div class="brand-name">PEAK Expense Importer</div>
+        <div class="brand-sub">Lamsang · Internal Tool</div>
+      </div>
+    </div>
+    <div class="topnav-actions">
+      <span class="pill"><span class="pill-dot"></span>READY</span>
+    </div>
+  </div>
+</nav>
+
+<div class="tabs-bar">
+  <div class="tabs-inner">
+    <button class="tab-btn active" data-tab="shopee-spx">
+      <span class="tab-ico shopee-spx">S</span>
+      Shopee & SPX Express
+    </button>
+    <button class="tab-btn" data-tab="tiktok">
+      <span class="tab-ico tiktok">T</span>
+      TikTok Ads
+    </button>
+    <button class="tab-btn" data-tab="commission">
+      <span class="tab-ico commission">C</span>
+      ค่านายหน้า TikTok
+    </button>
+    <button class="tab-btn" data-tab="tts">
+      <span class="tab-ico tts">S</span>
+      TikTok Shop & Thai Happy
+    </button>
+    <div class="tab-indicator" id="tab-indicator"></div>
+  </div>
+</div>
+
+<main>
+
+<!-- ==============================================================
+     TAB 1 · SHOPEE & SPX EXPRESS
+============================================================== -->
+<div class="tab-pane active" id="tab-shopee-spx">
+  <div class="hero">
+    <div>
+      <h1 class="hero-title">ค่าใช้จ่าย <span class="mono">Shopee & SPX</span></h1>
+      <p class="hero-desc">อัปโหลดไฟล์ ZIP ที่มี PDF ใบเสร็จ/ใบกำกับจาก Shopee และ SPX Express ระบบจะสกัดข้อมูลอัตโนมัติและส่งออกเป็นไฟล์ Excel ตามรูปแบบ PEAK Import_Expenses</p>
+    </div>
+    <div class="steps">
+      <span>1 · UPLOAD</span><span class="chev">›</span>
+      <span>2 · PARSE</span><span class="chev">›</span>
+      <span>3 · EXPORT</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">1. อัปโหลดไฟล์ ZIP</div>
+          <div class="card-sub">ลากไฟล์ .zip ที่มี PDF ใบเสร็จ/ใบกำกับภาษีลงในช่องนี้</div>
+        </div>
+        <span class="card-badge">ZIP / PDF</span>
+      </div>
+
+      <label class="dropzone" id="dropzone-pdf">
+        <input type="file" id="fileInput-pdf" accept=".zip" />
+        <div class="drop-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div>
+          <div class="drop-title" id="drop-title-pdf">คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่</div>
+          <div class="drop-sub" id="drop-sub-pdf">รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)</div>
+        </div>
+      </label>
+
+      <div class="progress" id="progress-pdf">
+        <div class="progress-text">
+          <span id="progress-label-pdf">กำลังประมวลผล…</span>
+          <span id="progress-count-pdf">0 / 0</span>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar-pdf"></div></div>
+      </div>
+
+      <div class="errors-list" id="errors-list-pdf">
+        <div class="errors-list-title">พบข้อผิดพลาด</div>
+        <ul id="errors-list-ul-pdf"></ul>
+      </div>
+    </div>
+
+    <!-- Config -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">2. การตั้งค่า Mapping</div>
+          <div class="card-sub">ตั้งค่าเลขที่ผู้ติดต่อ / ผังบัญชี / ช่องทางการเงิน</div>
+        </div>
+        <span class="card-badge">PEAK CONFIG</span>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">Shopee <span class="tag shopee">TIV</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-shopee-contact" value="C00005" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขทะเบียน</div>
+          <input class="config-input" id="cfg-shopee-taxid" value="105558019581" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">SPX Express <span class="tag spx-tiv">TIV</span> <span class="tag spx-rct">RCT</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-spx-contact" value="C00028" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขทะเบียน</div>
+          <input class="config-input" id="cfg-spx-taxid" value="105561164871" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">ค่าบริการ <span class="tag shopee">VAT 7%</span></div>
+        <div class="config-row">
+          <div class="config-label">บัญชี</div>
+          <input class="config-input" id="cfg-service-account" value="530408" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">คำอธิบาย</div>
+          <input class="config-input" id="cfg-service-desc" value="ค่าบริการ" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">ค่าขนส่ง <span class="tag spx-rct">NO VAT</span></div>
+        <div class="config-row">
+          <div class="config-label">บัญชี</div>
+          <input class="config-input" id="cfg-shipping-account" value="510107" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">คำอธิบาย</div>
+          <input class="config-input" id="cfg-shipping-desc" value="ค่าบริการขนส่ง" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">ทั่วไป</div>
+        <div class="config-row">
+          <div class="config-label">ชำระโดย</div>
+          <input class="config-input" id="cfg-paymethod-pdf" value="EWL001" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขสาขา</div>
+          <input class="config-input" id="cfg-branch-pdf" value="00000" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="results-pdf" style="display:none;">
+    <div class="summary-grid">
+      <div class="stat">
+        <div class="stat-label">Total Rows</div>
+        <div class="stat-value" id="stat-total-pdf">0</div>
+      </div>
+      <div class="stat shopee">
+        <div class="stat-label">Shopee</div>
+        <div class="stat-value" id="stat-shopee">0</div>
+      </div>
+      <div class="stat spx-tiv">
+        <div class="stat-label">SPX · TIV</div>
+        <div class="stat-value" id="stat-spxtiv">0</div>
+      </div>
+      <div class="stat spx-rct">
+        <div class="stat-label">SPX · RCT</div>
+        <div class="stat-value" id="stat-spxrct">0</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-header">
+        <div><div class="table-title">ตัวอย่างข้อมูล</div></div>
+        <div class="table-filters" id="filters-pdf">
+          <button class="filter-btn active" data-filter="all">ทั้งหมด</button>
+          <button class="filter-btn" data-filter="Shopee-TIV">Shopee</button>
+          <button class="filter-btn" data-filter="SPX-TIV">SPX TIV</button>
+          <button class="filter-btn" data-filter="SPX-RCT">SPX RCT</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Date</th><th>Type</th><th>ผู้รับเงิน</th>
+              <th>เลขที่ใบกำกับฯ</th><th>บัญชี</th><th>คำอธิบาย</th>
+              <th>อัตราภาษี</th><th style="text-align:right">ยอดที่ชำระ</th>
+            </tr>
+          </thead>
+          <tbody id="preview-body-pdf"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="empty-pdf" class="card" style="text-align:center; padding: 40px 24px;">
+    <div style="font-size:42px; opacity:0.3; margin-bottom:8px">📄</div>
+    <div class="empty-state-title">ยังไม่มีข้อมูล</div>
+    <div style="font-size:12.5px; color: var(--text-3);">อัปโหลดไฟล์ ZIP เพื่อเริ่มต้น</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="btn-reset-pdf" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+      เริ่มใหม่
+    </button>
+    <button class="btn btn-primary" id="btn-parse-pdf" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+      ประมวลผล
+    </button>
+    <button class="btn btn-success" id="btn-export-pdf" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export Excel
+    </button>
+  </div>
+</div>
+
+<!-- ==============================================================
+     TAB 2 · TIKTOK ADS
+============================================================== -->
+<div class="tab-pane" id="tab-tiktok">
+  <div class="hero">
+    <div>
+      <h1 class="hero-title">ค่าโฆษณา <span class="mono">TikTok Ads</span></h1>
+      <p class="hero-desc">อัปโหลดไฟล์ Transaction Excel จาก TikTok Ads Manager ระบบจะสร้างรายการค่าโฆษณา + ภ.พ.36 ค้างจ่าย + ภาษีขาย ภ.พ.36 ตามรูปแบบ PEAK Import_Expenses</p>
+    </div>
+    <div class="steps">
+      <span>1 · UPLOAD</span><span class="chev">›</span>
+      <span>2 · PARSE</span><span class="chev">›</span>
+      <span>3 · EXPORT</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">1. อัปโหลดไฟล์ Transaction</div>
+          <div class="card-sub">Export จาก TikTok Ads: Transactions → Download Excel</div>
+        </div>
+        <span class="card-badge">XLSX / CSV</span>
+      </div>
+
+      <label class="dropzone" id="dropzone-tt">
+        <input type="file" id="fileInput-tt" accept=".xlsx,.xls,.csv" />
+        <div class="drop-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div>
+          <div class="drop-title" id="drop-title-tt">คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่</div>
+          <div class="drop-sub" id="drop-sub-tt">รองรับ .xlsx / .xls / .csv (Transaction export)</div>
+        </div>
+      </label>
+
+      <div class="progress" id="progress-tt">
+        <div class="progress-text">
+          <span id="progress-label-tt">กำลังประมวลผล…</span>
+          <span id="progress-count-tt">0 / 0</span>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar-tt"></div></div>
+      </div>
+
+      <div class="errors-list" id="errors-list-tt">
+        <div class="errors-list-title">พบข้อผิดพลาด</div>
+        <ul id="errors-list-ul-tt"></ul>
+      </div>
+    </div>
+
+    <!-- Config -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">2. การตั้งค่า Mapping</div>
+          <div class="card-sub">ตั้งค่าผู้ติดต่อ / ผังบัญชี / ช่องทางการเงินตาม Payment method</div>
+        </div>
+        <span class="card-badge">PEAK CONFIG</span>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">TikTok Ads <span class="tag tiktok">VENDOR</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-tt-contact" value="C00016" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขทะเบียน</div>
+          <input class="config-input" id="cfg-tt-taxid" value="993000455738" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">บัญชี (ค่าโฆษณา)</div>
+          <input class="config-input" id="cfg-tt-account" value="520218" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">คำอธิบายนำหน้า</div>
+          <input class="config-input" id="cfg-tt-desc-prefix" value="ค่าโฆษณา Tiktok" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">ภ.พ.36 (ภาษีนำเข้าบริการ) <span class="tag tax">VAT 7%</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน (ค้างจ่าย)</div>
+          <input class="config-input" id="cfg-tt-pp36-contact" value="C00007" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">บัญชี ภ.พ.36</div>
+          <input class="config-input" id="cfg-tt-pp36-account" value="215103" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">ชำระโดย (ภาษีขาย)</div>
+          <input class="config-input" id="cfg-tt-pp36-paymethod" value="EWL003" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">Payment Method Mapping</div>
+        <div class="method-help">
+          จับคู่คำใน "Payment method" → รหัสช่องทางการเงิน (ค้นหาแบบ contains, ไม่สนใจตัวใหญ่/เล็ก)
+        </div>
+        <div class="method-map" id="method-map"></div>
+        <button class="method-add-btn" id="btn-add-method">+ เพิ่ม Mapping</button>
+        <div class="method-help">
+          <strong>Default</strong>: ถ้าไม่ match กับรายการใดเลย จะใช้ <code id="method-default-display">EWL003</code>
+        </div>
+        <div class="config-row" style="margin-top: 8px;">
+          <div class="config-label">Default</div>
+          <input class="config-input" id="cfg-tt-method-default" value="EWL003" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="results-tt" style="display:none;">
+    <div class="summary-grid">
+      <div class="stat">
+        <div class="stat-label">Total Rows</div>
+        <div class="stat-value" id="stat-total-tt">0</div>
+      </div>
+      <div class="stat tiktok">
+        <div class="stat-label">Transactions</div>
+        <div class="stat-value" id="stat-tt-tx">0</div>
+      </div>
+      <div class="stat tax">
+        <div class="stat-label">ยอดรวม</div>
+        <div class="stat-value" id="stat-tt-sum" style="font-size:19px">0.00</div>
+      </div>
+      <div class="stat tax">
+        <div class="stat-label">ภ.พ.36 (7%)</div>
+        <div class="stat-value warn" id="stat-tt-pp36" style="font-size:19px">0.00</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-header">
+        <div><div class="table-title">ตัวอย่างข้อมูล</div></div>
+        <div class="table-filters" id="filters-tt">
+          <button class="filter-btn active" data-filter="all">ทั้งหมด</button>
+          <button class="filter-btn" data-filter="pp36">ภ.พ.36</button>
+          <button class="filter-btn" data-filter="expense">ค่าโฆษณา</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>ลำดับ</th><th>Type</th><th>บัญชี</th>
+              <th>คำอธิบาย</th><th>ภาษี</th><th>ชำระโดย</th>
+              <th style="text-align:right">ยอด</th>
+            </tr>
+          </thead>
+          <tbody id="preview-body-tt"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="empty-tt" class="card" style="text-align:center; padding: 40px 24px;">
+    <div style="font-size:42px; opacity:0.3; margin-bottom:8px">🎵</div>
+    <div class="empty-state-title">ยังไม่มีข้อมูล</div>
+    <div style="font-size:12.5px; color: var(--text-3);">อัปโหลดไฟล์ Transaction เพื่อเริ่มต้น</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="btn-reset-tt" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+      เริ่มใหม่
+    </button>
+    <button class="btn btn-primary" id="btn-parse-tt" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+      ประมวลผล
+    </button>
+    <button class="btn btn-success" id="btn-export-tt" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export Excel
+    </button>
+  </div>
+</div>
+
+<!-- ==============================================================
+     TAB 3 · COMMISSION (TikTok Creator)
+============================================================== -->
+<div class="tab-pane" id="tab-commission">
+  <div class="hero">
+    <div>
+      <h1 class="hero-title">ค่านายหน้า <span class="mono">TikTok Creator</span></h1>
+      <p class="hero-desc">อัปโหลดไฟล์ ZIP ที่มีใบเสร็จค่านายหน้า Creator (TTSTHAC...) ระบบจะสกัดข้อมูลวันที่ ชื่อผู้รับ และจำนวนค่านายหน้าอัตโนมัติ ส่งออกเป็นไฟล์ Excel ตามรูปแบบ PEAK Import_Expenses</p>
+    </div>
+    <div class="steps">
+      <span>1 · UPLOAD</span><span class="chev">›</span>
+      <span>2 · PARSE</span><span class="chev">›</span>
+      <span>3 · EXPORT</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">1. อัปโหลดไฟล์ ZIP</div>
+          <div class="card-sub">ลากไฟล์ .zip ที่มี PDF Commission Receipt (TTSTHAC...) ลงในช่องนี้</div>
+        </div>
+        <span class="card-badge">ZIP / PDF</span>
+      </div>
+
+      <label class="dropzone" id="dropzone-cm">
+        <input type="file" id="fileInput-cm" accept=".zip" />
+        <div class="drop-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div>
+          <div class="drop-title" id="drop-title-cm">คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่</div>
+          <div class="drop-sub" id="drop-sub-cm">รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)</div>
+        </div>
+      </label>
+
+      <div class="progress" id="progress-cm">
+        <div class="progress-text">
+          <span id="progress-label-cm">กำลังประมวลผล…</span>
+          <span id="progress-count-cm">0 / 0</span>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar-cm"></div></div>
+      </div>
+
+      <div class="errors-list" id="errors-list-cm">
+        <div class="errors-list-title">พบข้อผิดพลาด</div>
+        <ul id="errors-list-ul-cm"></ul>
+      </div>
+    </div>
+
+    <!-- Config -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">2. การตั้งค่า Mapping</div>
+          <div class="card-sub">ตั้งค่าผู้ติดต่อ / ผังบัญชี / ช่องทางการเงิน</div>
+        </div>
+        <span class="card-badge">PEAK CONFIG</span>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">Commission Receipt <span class="tag commission">CREATOR</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-cm-contact" value="C00055" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">บัญชี</div>
+          <input class="config-input" id="cfg-cm-account" value="520101" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">คำอธิบายนำหน้า</div>
+          <input class="config-input" id="cfg-cm-desc-prefix" value="ค่านายหน้า ส่วนแบ่งการขาย" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">ชำระโดย</div>
+          <input class="config-input" id="cfg-cm-paymethod" value="EWL003" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">ตัวเลือกชื่อ</div>
+        <div class="config-row">
+          <div class="config-label">ใช้ชื่อจาก</div>
+          <select class="config-select" id="cfg-cm-name-source">
+            <option value="bill_from">Bill From · Client Name</option>
+            <option value="creator">Creator name</option>
+            <option value="username">Creator Username</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="results-cm" style="display:none;">
+    <div class="summary-grid">
+      <div class="stat">
+        <div class="stat-label">Total Rows</div>
+        <div class="stat-value" id="stat-total-cm">0</div>
+      </div>
+      <div class="stat commission">
+        <div class="stat-label">Creators</div>
+        <div class="stat-value" id="stat-cm-creators">0</div>
+      </div>
+      <div class="stat commission">
+        <div class="stat-label">ยอดรวม</div>
+        <div class="stat-value" id="stat-cm-sum" style="font-size:19px">0.00</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Date Range</div>
+        <div class="stat-value" id="stat-cm-daterange" style="font-size:13px; font-family: var(--font-mono); font-weight: 500;">—</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-header">
+        <div><div class="table-title">ตัวอย่างข้อมูล</div></div>
+        <div class="table-filters" id="filters-cm">
+          <button class="filter-btn active" data-filter="all">ทั้งหมด</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Date</th><th>Receipt No</th><th>Creator</th>
+              <th>ผู้รับเงิน</th><th>บัญชี</th><th>คำอธิบาย</th>
+              <th style="text-align:right">ยอด</th>
+            </tr>
+          </thead>
+          <tbody id="preview-body-cm"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="empty-cm" class="card" style="text-align:center; padding: 40px 24px;">
+    <div style="font-size:42px; opacity:0.3; margin-bottom:8px">💰</div>
+    <div class="empty-state-title">ยังไม่มีข้อมูล</div>
+    <div style="font-size:12.5px; color: var(--text-3);">อัปโหลดไฟล์ ZIP เพื่อเริ่มต้น</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="btn-reset-cm" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+      เริ่มใหม่
+    </button>
+    <button class="btn btn-primary" id="btn-parse-cm" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+      ประมวลผล
+    </button>
+    <button class="btn btn-success" id="btn-export-cm" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export Excel
+    </button>
+  </div>
+</div>
+
+<!-- ==============================================================
+     TAB 4 · TIKTOK SHOP & THAI HAPPY LOGISTICS
+============================================================== -->
+<div class="tab-pane" id="tab-tts">
+  <div class="hero">
+    <div>
+      <h1 class="hero-title">TikTok Shop <span class="mono">& Thai Happy</span></h1>
+      <p class="hero-desc">อัปโหลดไฟล์ ZIP ที่มีใบกำกับภาษี TikTok Shop (TTSTH) และใบเสร็จค่าขนส่ง Thai Happy Logistics (THJV) ระบบจะสกัดข้อมูลอัตโนมัติ · Credit Note (TTSTHCN) จะถูกข้ามไม่นำเข้า Excel</p>
+    </div>
+    <div class="steps">
+      <span>1 · UPLOAD</span><span class="chev">›</span>
+      <span>2 · PARSE</span><span class="chev">›</span>
+      <span>3 · EXPORT</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">1. อัปโหลดไฟล์ ZIP</div>
+          <div class="card-sub">ลากไฟล์ .zip ที่มี PDF ใบกำกับ/ใบเสร็จลงในช่องนี้</div>
+        </div>
+        <span class="card-badge">ZIP / PDF</span>
+      </div>
+
+      <label class="dropzone" id="dropzone-tts">
+        <input type="file" id="fileInput-tts" accept=".zip" />
+        <div class="drop-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div>
+          <div class="drop-title" id="drop-title-tts">คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่</div>
+          <div class="drop-sub" id="drop-sub-tts">รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)</div>
+        </div>
+      </label>
+
+      <div class="progress" id="progress-tts">
+        <div class="progress-text">
+          <span id="progress-label-tts">กำลังประมวลผล…</span>
+          <span id="progress-count-tts">0 / 0</span>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar-tts"></div></div>
+      </div>
+
+      <div class="errors-list" id="errors-list-tts">
+        <div class="errors-list-title">พบข้อผิดพลาด</div>
+        <ul id="errors-list-ul-tts"></ul>
+      </div>
+    </div>
+
+    <!-- Config -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">2. การตั้งค่า Mapping</div>
+          <div class="card-sub">ตั้งค่าผู้ติดต่อ / ผังบัญชี / ช่องทางการเงิน</div>
+        </div>
+        <span class="card-badge">PEAK CONFIG</span>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">TikTok Shop <span class="tag tts">TIV</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-tts-contact" value="C00119" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขทะเบียน</div>
+          <input class="config-input" id="cfg-tts-taxid" value="0105566214176" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">บัญชี</div>
+          <input class="config-input" id="cfg-tts-account" value="530408" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">คำอธิบาย</div>
+          <input class="config-input" id="cfg-tts-desc" value="ค่าบริการ" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">Thai Happy Logistics <span class="tag thj">RCT</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-thj-contact" value="C00037" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขทะเบียน</div>
+          <input class="config-input" id="cfg-thj-taxid" value="0105566107906" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">บัญชี</div>
+          <input class="config-input" id="cfg-thj-account" value="510107" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">คำอธิบาย</div>
+          <input class="config-input" id="cfg-thj-desc" value="ค่าขนส่งสินค้า" />
+        </div>
+      </div>
+
+      <div class="config-group">
+        <div class="config-group-title">ทั่วไป</div>
+        <div class="config-row">
+          <div class="config-label">ชำระโดย</div>
+          <input class="config-input" id="cfg-tts-paymethod" value="EWL003" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขสาขา</div>
+          <input class="config-input" id="cfg-tts-branch" value="00000" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="results-tts" style="display:none;">
+    <div class="summary-grid">
+      <div class="stat">
+        <div class="stat-label">Total Rows</div>
+        <div class="stat-value" id="stat-total-tts">0</div>
+      </div>
+      <div class="stat tts">
+        <div class="stat-label">TikTok Shop</div>
+        <div class="stat-value" id="stat-tts-count">0</div>
+      </div>
+      <div class="stat thj">
+        <div class="stat-label">Thai Happy</div>
+        <div class="stat-value" id="stat-thj-count">0</div>
+      </div>
+      <div class="stat cn">
+        <div class="stat-label">Credit Notes (ข้าม)</div>
+        <div class="stat-value" id="stat-cn-count">0</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-header">
+        <div><div class="table-title">ตัวอย่างข้อมูล</div></div>
+        <div class="table-filters" id="filters-tts">
+          <button class="filter-btn active" data-filter="all">ทั้งหมด</button>
+          <button class="filter-btn" data-filter="TTSTH">TikTok Shop</button>
+          <button class="filter-btn" data-filter="THJV">Thai Happy</button>
+          <button class="filter-btn" data-filter="TTSTH-CN">Credit Note</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Date</th><th>Type</th><th>ผู้รับเงิน</th>
+              <th>เลขที่ใบกำกับฯ</th><th>บัญชี</th><th>คำอธิบาย</th>
+              <th>อัตราภาษี</th><th style="text-align:right">ยอดที่ชำระ</th>
+            </tr>
+          </thead>
+          <tbody id="preview-body-tts"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="empty-tts" class="card" style="text-align:center; padding: 40px 24px;">
+    <div style="font-size:42px; opacity:0.3; margin-bottom:8px">🛒</div>
+    <div class="empty-state-title">ยังไม่มีข้อมูล</div>
+    <div style="font-size:12.5px; color: var(--text-3);">อัปโหลดไฟล์ ZIP เพื่อเริ่มต้น</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="btn-reset-tts" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+      เริ่มใหม่
+    </button>
+    <button class="btn btn-primary" id="btn-parse-tts" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+      ประมวลผล
+    </button>
+    <button class="btn btn-success" id="btn-export-tts" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export Excel
+    </button>
+  </div>
+</div>
+
+<footer>
   LAMSANG · PEAK EXPENSE IMPORTER · v4.3 · made with care in SUKHOTHAI
 </footer>
 
