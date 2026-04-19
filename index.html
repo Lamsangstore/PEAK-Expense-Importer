@@ -4,6 +4,25 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>PEAK Expense Importer · Lamsang</title>
+
+<!-- Favicon (inline SVG, dark on light / light on dark auto) -->
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%231d1d1f'/%3E%3Cstop offset='100%25' stop-color='%233a3a3c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='44' font-family='-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif' font-size='38' font-weight='800' text-anchor='middle' fill='white' letter-spacing='-1'%3EP%3C/text%3E%3C/svg%3E">
+
+<!-- Fallback for browsers that don't support SVG favicons (Safari older) -->
+<link rel="alternate icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231d1d1f'/%3E%3Ctext x='16' y='22' font-family='Arial,sans-serif' font-size='19' font-weight='800' text-anchor='middle' fill='white'%3EP%3C/text%3E%3C/svg%3E">
+
+<!-- Apple touch icon (home screen / bookmarks on iOS) -->
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Cdefs%3E%3ClinearGradient id='bg' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%231d1d1f'/%3E%3Cstop offset='100%25' stop-color='%233a3a3c'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='180' height='180' rx='40' fill='url(%23bg)'/%3E%3Ctext x='90' y='122' font-family='-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif' font-size='106' font-weight='800' text-anchor='middle' fill='white' letter-spacing='-3'%3EP%3C/text%3E%3Ccircle cx='138' cy='44' r='10' fill='%2330a46c'/%3E%3C/svg%3E">
+
+<!-- PWA theme + meta -->
+<meta name="theme-color" content="#1d1d1f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PEAK Import">
+<meta name="description" content="นำเข้ารายการค่าใช้จ่ายจาก Shopee, SPX, TikTok เข้าระบบบัญชี PEAK อัตโนมัติ">
+
+<!-- Web app manifest (inline via data URL) -->
+<link rel="manifest" href='data:application/manifest+json,{"name":"PEAK Expense Importer","short_name":"PEAK Import","description":"Import expenses from Shopee, SPX, TikTok to PEAK accounting","start_url":"./","display":"standalone","background_color":"%23fafafa","theme_color":"%231d1d1f","icons":[{"src":"data:image/svg+xml,%253Csvg xmlns=\u0027http://www.w3.org/2000/svg\u0027 viewBox=\u00270 0 192 192\u0027%253E%253Crect width=\u0027192\u0027 height=\u0027192\u0027 rx=\u002742\u0027 fill=\u0027%25231d1d1f\u0027/%253E%253Ctext x=\u002796\u0027 y=\u0027132\u0027 font-family=\u0027Arial\u0027 font-size=\u0027115\u0027 font-weight=\u0027800\u0027 text-anchor=\u0027middle\u0027 fill=\u0027white\u0027%253EP%253C/text%253E%253C/svg%253E","sizes":"192x192","type":"image/svg+xml"},{"src":"data:image/svg+xml,%253Csvg xmlns=\u0027http://www.w3.org/2000/svg\u0027 viewBox=\u00270 0 512 512\u0027%253E%253Crect width=\u0027512\u0027 height=\u0027512\u0027 rx=\u0027112\u0027 fill=\u0027%25231d1d1f\u0027/%253E%253Ctext x=\u0027256\u0027 y=\u0027352\u0027 font-family=\u0027Arial\u0027 font-size=\u0027307\u0027 font-weight=\u0027800\u0027 text-anchor=\u0027middle\u0027 fill=\u0027white\u0027%253EP%253C/text%253E%253C/svg%253E","sizes":"512x512","type":"image/svg+xml"}]}'>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@400;500;600&family=Noto+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -2199,7 +2218,7 @@
 </div>
 
 <footer>
-  LAMSANG · PEAK EXPENSE IMPORTER · v4.6 · made with care in SUKHOTHAI
+  LAMSANG · PEAK EXPENSE IMPORTER · v4.8 · made with care in SUKHOTHAI
 </footer>
 
 </main>
@@ -2238,40 +2257,34 @@
   }
 
   function extractLineItemsNote(fullText) {
-    // Attempt format 1: numbered rows — needs rebuilding line-by-line
-    // Since pdf.js flattens with spaces, we rely on full text in order.
-    // Pattern allows for name containing mixed words until we see "N num.dd num.dd"
     const items = [];
-
-    // Format 2 & 3 are line-based with "- " prefix
-    // Work on the flat text by splitting on common delimiters to form "lines"
-    // pdf.js concatenates items with spaces within a line; newlines come from page.extract
     const lines = fullText.split('\n');
+    let cumLen = 0;
     for (const raw of lines) {
       const line = raw.trim();
+      if (!line) continue;
+      let matched = null;
       // Format 2: "- Name ฿xxx ฿xxx ฿xxx"
       let m = line.match(/^-\s*(.+?)\s+฿([\d,]+\.\d+)\s+฿([\d,]+\.\d+)\s+฿([\d,]+\.\d+)\s*$/);
-      if (m) {
-        items.push({ desc: m[1].trim(), amt: m[4] });
-        continue;
+      if (m) matched = { desc: m[1].trim(), amt: m[4] };
+      if (!matched) {
+        // Format 3: "- Name / ฿xxx"
+        m = line.match(/^-\s*(.+?)\s*\/\s*฿([\d,]+\.\d+)\s*$/);
+        if (m) matched = { desc: m[1].trim(), amt: m[2] };
       }
-      // Format 3: "- Name / ฿xxx"
-      m = line.match(/^-\s*(.+?)\s*\/\s*฿([\d,]+\.\d+)\s*$/);
-      if (m) {
-        items.push({ desc: m[1].trim(), amt: m[2] });
-        continue;
+      if (!matched) {
+        // Format 1: "N Name N unit amt"
+        m = line.match(/^(\d+)\s+(.+?)\s+(\d+)\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s*$/);
+        if (m) matched = { desc: m[2].trim(), amt: m[5] };
       }
-      // Format 1: "N Name N unit amt" (Shopee/SPX)
-      m = line.match(/^(\d+)\s+(.+?)\s+(\d+)\s+([\d,]+\.\d+)\s+([\d,]+\.\d+)\s*$/);
-      if (m) {
-        items.push({ desc: m[2].trim(), amt: m[5] });
-        continue;
+      if (matched) {
+        items.push(matched);
+        cumLen += matched.desc.length + matched.amt.length + 2;  // rough
+        if (cumLen > 500) break;  // enough; avoids building huge note buffer
       }
     }
-
     if (items.length === 0) return '';
     const note = items.map(it => `${it.desc} ${it.amt}`).join('\n');
-    // PEAK note limit is 500 chars — truncate if necessary
     if (note.length > 500) return note.slice(0, 497) + '...';
     return note;
   }
@@ -2611,21 +2624,24 @@
 
   async function parsePdf(buffer, fname, type) {
     const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-    let fullText = '';
-    let lineText = '';  // text with newlines preserved from item.hasEOL
+    // Collect text chunks into arrays, join once at end (avoids string concat penalty)
+    const chunks = [];
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
       const content = await page.getTextContent();
-      // Flat text (for global matches that span "lines")
-      fullText += content.items.map(it => it.str).join(' ') + '\n';
-      // Line-preserved text: insert \n at positions where pdf.js marked end of line
       for (const it of content.items) {
-        lineText += it.str;
-        if (it.hasEOL) lineText += '\n';
-        else lineText += ' ';
+        chunks.push(it.str);
+        chunks.push(it.hasEOL ? '\n' : ' ');
       }
-      lineText += '\n';
+      chunks.push('\n');
+      // Release page resources
+      page.cleanup();
     }
+    // Release pdf resources before expensive work
+    try { await pdf.cleanup(); await pdf.destroy(); } catch(e) {}
+    const lineText = chunks.join('');
+    // fullText for regex that work across lines — reuse lineText (works same for our regexes)
+    const fullText = lineText;
     const mDate = fullText.match(/Date\s+(\d{2})\/(\d{2})\/(\d{4})/);
     let docDate = null;
     if (mDate) docDate = `${mDate[3]}${mDate[2]}${mDate[1]}`;
@@ -2725,6 +2741,8 @@
         const pct = 5 + Math.round(90 * (i + 1) / pdfFiles.length);
         pb.style.width = pct + '%';
         pc.textContent = `${i + 1} / ${pdfFiles.length}`;
+        // Yield to browser every 5 files so it can paint + GC
+        if (i % 5 === 4) await new Promise(r => setTimeout(r, 0));
       }
 
       const order = { 'Shopee-TIV': 1, 'SPX-TIV': 2, 'SPX-RCT': 3 };
@@ -3427,19 +3445,20 @@
 
   async function parseCommissionPdf(buffer, fname) {
     const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-    let fullText = '';
-    let lineText = '';
+    const chunks = [];
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
       const content = await page.getTextContent();
-      fullText += content.items.map(it => it.str).join(' ') + '\n';
       for (const it of content.items) {
-        lineText += it.str;
-        if (it.hasEOL) lineText += '\n';
-        else lineText += ' ';
+        chunks.push(it.str);
+        chunks.push(it.hasEOL ? '\n' : ' ');
       }
-      lineText += '\n';
+      chunks.push('\n');
+      page.cleanup();
     }
+    try { await pdf.cleanup(); await pdf.destroy(); } catch(e) {}
+    const lineText = chunks.join('');
+    const fullText = lineText;
 
     const mDate = fullText.match(/Receipt\s+Date\s*:\s*([A-Za-z]+\s+\d+,\s*\d{4})/);
     const receiptDateStr = mDate ? mDate[1].trim() : null;
@@ -3542,6 +3561,7 @@
         const pct = 5 + Math.round(90 * (i + 1) / pdfFiles.length);
         pb.style.width = pct + '%';
         pc.textContent = `${i + 1} / ${pdfFiles.length}`;
+        if (i % 5 === 4) await new Promise(r => setTimeout(r, 0));
       }
 
       cmState.rows.sort((a, b) => {
@@ -3786,19 +3806,20 @@
 
   async function parseTtsPdf(buffer, fname, type) {
     const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
-    let fullText = '';
-    let lineText = '';
+    const chunks = [];
     for (let p = 1; p <= pdf.numPages; p++) {
       const page = await pdf.getPage(p);
       const content = await page.getTextContent();
-      fullText += content.items.map(it => it.str).join(' ') + '\n';
       for (const it of content.items) {
-        lineText += it.str;
-        if (it.hasEOL) lineText += '\n';
-        else lineText += ' ';
+        chunks.push(it.str);
+        chunks.push(it.hasEOL ? '\n' : ' ');
       }
-      lineText += '\n';
+      chunks.push('\n');
+      page.cleanup();
     }
+    try { await pdf.cleanup(); await pdf.destroy(); } catch(e) {}
+    const lineText = chunks.join('');
+    const fullText = lineText;
 
     // Extract date — "Receipt date:", "Invoice date:", or "Credit note date:"
     const mDate = fullText.match(/(?:Receipt date|Invoice date|Credit note date)\s*[:：]\s*([A-Za-z]+\s+\d+,\s*\d{4})/);
@@ -3938,6 +3959,7 @@
         const pct = 5 + Math.round(90 * (i + 1) / pdfFiles.length);
         pb.style.width = pct + '%';
         pc.textContent = `${i + 1} / ${pdfFiles.length}`;
+        if (i % 5 === 4) await new Promise(r => setTimeout(r, 0));
       }
 
       // Sort: TTSTH first, THJV second, TTSTH-CN last — all by date
