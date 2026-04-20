@@ -2218,7 +2218,7 @@
 </div>
 
 <footer>
-  LAMSANG · PEAK EXPENSE IMPORTER · v4.9 · made with care in SUKHOTHAI
+  LAMSANG · PEAK EXPENSE IMPORTER · v5.0 · made with care in SUKHOTHAI
 </footer>
 
 </main>
@@ -2254,6 +2254,16 @@
       cell.s = cell.s || {};
       cell.s.alignment = { wrapText: true, vertical: 'top' };
     }
+  }
+
+  // PEAK's "อ้างอิงถึง" column accepts max 32 chars.
+  // If filename is longer, keep the last 32 (the meaningful invoice ID portion,
+  // not the vendor prefix like "Shopee-TIV-" or "SPX Express-TIV-").
+  function fileToRef(fname) {
+    const base = fname.replace(/\.pdf$/i, '');
+    if (base.length <= 32) return base;
+    // Trim leading delimiters after cutting so we don't start with "-" or space
+    return base.slice(-32).replace(/^[\s\-_]+/, '');
   }
 
   function extractLineItemsNote(fullText) {
@@ -2604,7 +2614,7 @@
     const hasVatGuess = (type === 'Shopee-TIV' || type === 'SPX-TIV');
     const fee = getFeeConfig(hasVatGuess);
     const g = getPdfGlobalConfig();
-    const refFromFile = fname.replace(/\.pdf$/i, '');
+    const refFromFile = fileToRef(fname);
     return {
       _type: type, _fname: fname, _error: true,
       _hasVat: hasVatGuess,
@@ -2673,7 +2683,7 @@
     const vendor = getVendorConfig(type);
     const fee = getFeeConfig(hasVatSection);
     const g = getPdfGlobalConfig();
-    const refFromFile = fname.replace(/\.pdf$/i, '');
+    const refFromFile = fileToRef(fname);
     const itemsNote = extractLineItemsNote(lineText);
     // Skip Shopee bills with 0 baht (not worth importing into PEAK)
     const skipZero = (type === 'Shopee-TIV' && total === 0);
@@ -3717,7 +3727,7 @@
     cmState.rows.forEach((r, idx) => {
       const name = resolveCmName(r);
       const desc = `${descPrefix} ${name}`.trim();
-      const refFromFile = (r._fname || '').replace(/\.pdf$/i, '');
+      const refFromFile = fileToRef(r._fname || '');
       data.push([
         idx + 1,
         Number(r.docDate),
@@ -3878,7 +3888,7 @@
 
     return {
       _type: type, _fname: fname, _error: false, _skip: (type === 'TTSTH-CN'),
-      docDate, refTo: fname.replace(/\.pdf$/i, ''),
+      docDate, refTo: fileToRef(fname),
       contact: cfg.contact, taxId: cfg.taxId, branch: g.branch,
       invoiceNo: type === 'THJV' ? '' : fullInvNum,     // THJV (receipt) doesn't need เลขที่ใบกำกับ
       invoiceDate: type === 'THJV' ? '' : docDate,
@@ -3909,7 +3919,7 @@
     const invNum = fname.replace(/\.pdf$/i, '');
     return {
       _type: type, _fname: fname, _error: true, _skip: (type === 'TTSTH-CN'),
-      docDate, refTo: fname.replace(/\.pdf$/i, ''),
+      docDate, refTo: fileToRef(fname),
       contact: cfg.contact || '', taxId: cfg.taxId || '', branch: g.branch,
       invoiceNo: type === 'THJV' ? '' : `${invPrefix}-${invNum}`,
       invoiceDate: type === 'THJV' ? '' : docDate,
