@@ -2218,7 +2218,7 @@
 </div>
 
 <footer>
-  LAMSANG · PEAK EXPENSE IMPORTER · v4.8 · made with care in SUKHOTHAI
+  LAMSANG · PEAK EXPENSE IMPORTER · v4.9 · made with care in SUKHOTHAI
 </footer>
 
 </main>
@@ -2675,9 +2675,11 @@
     const g = getPdfGlobalConfig();
     const refFromFile = fname.replace(/\.pdf$/i, '');
     const itemsNote = extractLineItemsNote(lineText);
+    // Skip Shopee bills with 0 baht (not worth importing into PEAK)
+    const skipZero = (type === 'Shopee-TIV' && total === 0);
     return {
       _type: type, _fname: fname, _error: false,
-      _hasVat: hasVatSection,
+      _hasVat: hasVatSection, _skip: skipZero,
       docDate, refTo: refFromFile,
       contact: vendor.contact, taxId: vendor.taxId, branch: g.branch,
       invoiceNo: hasVatSection ? invNumber : '',
@@ -2751,7 +2753,12 @@
         if (t !== 0) return t;
         return a.docDate.localeCompare(b.docDate);
       });
-      pdfState.rows.forEach((r, i) => r.seq = i + 1);
+      // Assign sequence only to non-skipped rows
+      let seqN = 0;
+      pdfState.rows.forEach(r => {
+        if (r._skip) r.seq = 0;
+        else { seqN += 1; r.seq = seqN; }
+      });
 
       pb.style.width = '100%';
       pl.textContent = 'เสร็จสิ้น';
@@ -2761,19 +2768,24 @@
       }, 600);
 
       renderPdfResults();
+      const skipCount = pdfState.rows.filter(r => r._skip).length;
+      const exportCount = pdfState.rows.length - skipCount;
       if (pdfState.errors.length > 0) {
         const ul = $('errors-list-ul-pdf'); ul.innerHTML = '';
         pdfState.errors.forEach(e => {
           const li = document.createElement('li'); li.textContent = e; ul.appendChild(li);
         });
         $('errors-list-pdf').classList.add('show');
-        toast(`ประมวลผลสำเร็จ · ${pdfState.rows.length} รายการ · ข้อผิดพลาด ${pdfState.errors.length}`, 'warn');
+        toast(`ประมวลผลสำเร็จ · ${exportCount} รายการ · ข้อผิดพลาด ${pdfState.errors.length}`, 'warn');
       } else {
-        toast(`ประมวลผลสำเร็จ · ${pdfState.rows.length} รายการ`, 'success');
+        const msg = skipCount > 0
+          ? `ประมวลผลสำเร็จ · ${exportCount} รายการ · ข้ามบิล 0 บาท ${skipCount} รายการ`
+          : `ประมวลผลสำเร็จ · ${exportCount} รายการ`;
+        toast(msg, 'success');
       }
       btnParse.disabled = false;
       btnReset.disabled = false;
-      btnExport.disabled = pdfState.rows.length === 0;
+      btnExport.disabled = exportCount === 0;
     } catch (err) {
       console.error(err);
       toast('ผิดพลาด: ' + err.message, 'error');
@@ -2786,8 +2798,10 @@
   function renderPdfResults() {
     $('empty-pdf').style.display = 'none';
     $('results-pdf').style.display = 'block';
-    const c = { total: pdfState.rows.length, shopee: 0, spxtiv: 0, spxrct: 0 };
+    const c = { total: 0, shopee: 0, spxtiv: 0, spxrct: 0 };
     pdfState.rows.forEach(r => {
+      if (r._skip) return;
+      c.total++;
       if (r._type === 'Shopee-TIV') c.shopee++;
       else if (r._type === 'SPX-TIV') c.spxtiv++;
       else if (r._type === 'SPX-RCT') c.spxrct++;
@@ -2817,12 +2831,15 @@
     filtered.forEach(r => {
       const tr = document.createElement('tr');
       if (r._error) tr.classList.add('row-error');
+      if (r._skip) tr.classList.add('row-skip');
       const d = `${r.docDate.slice(0,4)}-${r.docDate.slice(4,6)}-${r.docDate.slice(6,8)}`;
       const eb = r._error ? '<span class="tag-err">ERR</span>' : '';
+      const sb = r._skip ? '<span class="tag-type skip">SKIP</span>' : '';
+      const seqDisplay = r._skip ? '—' : r.seq;
       tr.innerHTML = `
-        <td class="td-num">${r.seq}</td>
+        <td class="td-num">${seqDisplay}</td>
         <td class="td-mono">${d}</td>
-        <td>${tagMap[r._type]}${eb}</td>
+        <td>${tagMap[r._type]}${eb}${sb}</td>
         <td class="td-mono">${r.contact}</td>
         <td class="td-mono">${r.invoiceNo || '—'}</td>
         <td class="td-mono">${r.account}</td>
@@ -2861,7 +2878,12 @@
   });
 
   $('btn-export-pdf').addEventListener('click', () => {
-    if (pdfState.rows.length === 0) return;
+    // Filter out skipped rows (e.g., Shopee bills with 0 baht)
+    const exportable = pdfState.rows.filter(r => !r._skip);
+    if (exportable.length === 0) {
+      toast('ไม่มีข้อมูลสำหรับ export', 'warn');
+      return;
+    }
     const headers = [
       'ลำดับที่*','วันที่เอกสาร','อ้างอิงถึง','ผู้รับเงิน/คู่ค้า','เลขทะเบียน 13 หลัก',
       'เลขสาขา 5 หลัก','เลขที่ใบกำกับฯ (ถ้ามี)','วันที่ใบกำกับฯ (ถ้ามี)','วันที่บันทึกภาษีซื้อ (ถ้ามี)',
@@ -2869,9 +2891,9 @@
       'ชำระโดย','จำนวนเงินที่ชำระ','ภ.ง.ด. (ถ้ามี)','หมายเหตุ','กลุ่มจัดประเภท'
     ];
     const data = [headers];
-    pdfState.rows.forEach(r => {
+    exportable.forEach((r, idx) => {
       data.push([
-        r.seq, Number(r.docDate), r.refTo || '', r.contact, r.taxId, r.branch,
+        idx + 1, Number(r.docDate), r.refTo || '', r.contact, r.taxId, r.branch,
         r.invoiceNo || '', r.invoiceDate ? Number(r.invoiceDate) : '',
         r.taxRecordDate ? Number(r.taxRecordDate) : '', r.priceType,
         r.account, r.description, r.qty, r.unitPrice, r.vatRate,
@@ -2884,13 +2906,13 @@
       {wch:11},{wch:8},{wch:22},{wch:7},{wch:13},{wch:10},{wch:18},{wch:10},{wch:17},
       {wch:13},{wch:50},{wch:14}
     ];
-    applyNoteWrapText(ws, pdfState.rows.length);
+    applyNoteWrapText(ws, exportable.length);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Import_Expenses');
     const now = new Date(); const pad = n => String(n).padStart(2,'0');
     XLSX.writeFile(wb, `PEAK_ImportExpense_ShopeeSPX_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`);
     confettiBurst();
-    toast(`Export สำเร็จ · ${pdfState.rows.length} รายการ`, 'success');
+    toast(`Export สำเร็จ · ${exportable.length} รายการ`, 'success');
   });
 
   /* ====================================================================================
