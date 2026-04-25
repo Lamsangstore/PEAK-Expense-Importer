@@ -72,6 +72,9 @@
     --thj-soft: #d1fae5;
     --cn: #64748b;
     --cn-soft: #f1f5f9;
+    --pipo: #8b5cf6;
+    --pipo-soft: #ede9fe;
+    --pipo-accent: #7c3aed;
     --font-display: 'Manrope', 'Noto Sans Thai', sans-serif;
     --font-body: 'Inter', 'Noto Sans Thai', sans-serif;
     --font-thai: 'Noto Sans Thai', 'Manrope', sans-serif;
@@ -387,6 +390,10 @@
   }
   .tab-btn .tab-ico.tts {
     background: linear-gradient(135deg, var(--tts) 0%, var(--thj) 100%);
+    color: #fff;
+  }
+  .tab-btn .tab-ico.pipo {
+    background: linear-gradient(135deg, var(--pipo) 0%, var(--pipo-accent) 100%);
     color: #fff;
   }
   .tab-pane { display: none; }
@@ -747,6 +754,8 @@
   .config-group-title .tag.commission { background: var(--commission-soft); color: var(--commission-accent); }
   .config-group-title .tag.tts { background: var(--tts-soft); color: var(--tts); }
   .config-group-title .tag.thj { background: var(--thj-soft); color: var(--thj); }
+  .config-group-title .tag.pipo { background: var(--pipo-soft); color: var(--pipo-accent); }
+  .tag-type.pipo { background: var(--pipo-soft); color: var(--pipo-accent); }
 
   /* Method mapping editor */
   .method-map {
@@ -1058,6 +1067,7 @@
   .stat.tts { border-left: 3px solid var(--tts); }
   .stat.thj { border-left: 3px solid var(--thj); }
   .stat.cn { border-left: 3px solid var(--cn); }
+  .stat.pipo { border-left: 3px solid var(--pipo); }
   .stat-value.danger { color: var(--danger); }
   .stat-value.warn { color: var(--warn); }
 
@@ -1494,6 +1504,10 @@
     <button class="tab-btn" data-tab="tts">
       <span class="tab-ico tts">S</span>
       TikTok Shop & Thai Happy
+    </button>
+    <button class="tab-btn" data-tab="pipo">
+      <span class="tab-ico pipo">P</span>
+      PIPO Fintech
     </button>
     <div class="tab-indicator" id="tab-indicator"></div>
   </div>
@@ -2217,8 +2231,156 @@
   </div>
 </div>
 
+<!-- ==============================================================
+     TAB 5 · PIPO FINTECH
+============================================================== -->
+<div class="tab-pane" id="tab-pipo">
+  <div class="hero">
+    <div>
+      <h1 class="hero-title">PIPO Fintech <span class="mono">(TH)</span></h1>
+      <p class="hero-desc">อัปโหลดไฟล์ ZIP ที่มีใบเสร็จ PIPO Fintech (Invoice_PiPO_*.PDF) ระบบจะสกัดวันที่ · Receipt No · ชื่อรายการ และยอดเงินอัตโนมัติ</p>
+    </div>
+    <div class="steps">
+      <span>1 · UPLOAD</span><span class="chev">›</span>
+      <span>2 · PARSE</span><span class="chev">›</span>
+      <span>3 · EXPORT</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">1. อัปโหลดไฟล์ ZIP</div>
+          <div class="card-sub">ลากไฟล์ .zip ที่มี PDF ใบเสร็จ PIPO ลงในช่องนี้</div>
+        </div>
+        <span class="card-badge">ZIP / PDF</span>
+      </div>
+      <label class="dropzone" id="dropzone-pipo">
+        <input type="file" id="fileInput-pipo" accept=".zip" />
+        <div class="drop-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <div>
+          <div class="drop-title" id="drop-title-pipo">คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่</div>
+          <div class="drop-sub" id="drop-sub-pipo">รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)</div>
+        </div>
+      </label>
+      <div class="progress" id="progress-pipo">
+        <div class="progress-text">
+          <span id="progress-label-pipo">กำลังประมวลผล…</span>
+          <span id="progress-count-pipo">0 / 0</span>
+        </div>
+        <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar-pipo"></div></div>
+      </div>
+      <div class="errors-list" id="errors-list-pipo">
+        <div class="errors-list-title">พบข้อผิดพลาด</div>
+        <ul id="errors-list-ul-pipo"></ul>
+      </div>
+    </div>
+
+    <!-- Config -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">2. การตั้งค่า Mapping</div>
+          <div class="card-sub">ตั้งค่าผู้ติดต่อ / ผังบัญชี / ช่องทางการเงิน</div>
+        </div>
+        <span class="card-badge">PEAK CONFIG</span>
+      </div>
+      <div class="config-group">
+        <div class="config-group-title">PIPO Fintech (TH) <span class="tag pipo">RCT</span></div>
+        <div class="config-row">
+          <div class="config-label">ผู้รับเงิน</div>
+          <input class="config-input" id="cfg-pipo-contact" value="C00365" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขทะเบียน</div>
+          <input class="config-input" id="cfg-pipo-taxid" value="0105568012155" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">บัญชี</div>
+          <input class="config-input" id="cfg-pipo-account" value="530408" />
+        </div>
+      </div>
+      <div class="config-group">
+        <div class="config-group-title">ทั่วไป</div>
+        <div class="config-row">
+          <div class="config-label">ชำระโดย</div>
+          <input class="config-input" id="cfg-pipo-paymethod" value="EWL001" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">เลขสาขา</div>
+          <input class="config-input" id="cfg-pipo-branch" value="00000" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="results-pipo" style="display:none;">
+    <div class="summary-grid">
+      <div class="stat">
+        <div class="stat-label">Total Rows</div>
+        <div class="stat-value" id="stat-total-pipo">0</div>
+      </div>
+      <div class="stat pipo">
+        <div class="stat-label">ยอดรวม (THB)</div>
+        <div class="stat-value" id="stat-pipo-sum">0.00</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">วันที่แรก</div>
+        <div class="stat-value" id="stat-pipo-from" style="font-size:16px">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">วันที่สุดท้าย</div>
+        <div class="stat-value" id="stat-pipo-to" style="font-size:16px">—</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-header">
+        <div><div class="table-title">ตัวอย่างข้อมูล</div></div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Date</th><th>Receipt No</th>
+              <th>คำอธิบาย</th><th>บัญชี</th><th>ชำระโดย</th>
+              <th style="text-align:right">Amount</th>
+            </tr>
+          </thead>
+          <tbody id="preview-body-pipo"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="empty-pipo" class="card" style="text-align:center; padding: 40px 24px;">
+    <div style="font-size:42px; opacity:0.3; margin-bottom:8px">💳</div>
+    <div class="empty-state-title">ยังไม่มีข้อมูล</div>
+    <div style="font-size:12.5px; color: var(--text-3);">อัปโหลดไฟล์ ZIP เพื่อเริ่มต้น</div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="btn-reset-pipo" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+      เริ่มใหม่
+    </button>
+    <button class="btn btn-primary" id="btn-parse-pipo" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+      ประมวลผล
+    </button>
+    <button class="btn btn-success" id="btn-export-pipo" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export Excel
+    </button>
+  </div>
+</div>
+
 <footer>
-  LAMSANG · PEAK EXPENSE IMPORTER · v5.0 · made with care in SUKHOTHAI
+  LAMSANG · PEAK EXPENSE IMPORTER · v5.1 · made with care in SUKHOTHAI
 </footer>
 
 </main>
@@ -4175,6 +4337,255 @@
     XLSX.writeFile(wb, `PEAK_ImportExpense_TikTokShop_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`);
     confettiBurst();
     toast(`Export สำเร็จ · ${exportable.length} รายการ`, 'success');
+  });
+
+  /* ====================================================================================
+     ==============  TAB 5: PIPO FINTECH  ===============================================
+  ==================================================================================== */
+
+  const pipoState = { zipFile: null, rows: [], errors: [] };
+
+  // Dropzone
+  const dzPipo = $('dropzone-pipo'), fiPipo = $('fileInput-pipo');
+  ['dragenter','dragover'].forEach(ev => dzPipo.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzPipo.classList.add('active');
+  }));
+  ['dragleave','drop'].forEach(ev => dzPipo.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzPipo.classList.remove('active');
+  }));
+  dzPipo.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) handlePipoFile(f); });
+  fiPipo.addEventListener('change', e => { if (e.target.files[0]) handlePipoFile(e.target.files[0]); });
+
+  function handlePipoFile(file) {
+    if (!file.name.toLowerCase().endsWith('.zip')) { toast('ต้องเป็นไฟล์ .zip เท่านั้น', 'error'); return; }
+    pipoState.zipFile = file;
+    dzPipo.classList.add('has-file');
+    $('drop-title-pipo').textContent = file.name;
+    $('drop-sub-pipo').textContent = `${(file.size/1024/1024).toFixed(2)} MB · พร้อมประมวลผล`;
+    $('btn-parse-pipo').disabled = false;
+    $('btn-reset-pipo').disabled = false;
+  }
+
+  async function parsePipoPdf(buffer, fname) {
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    const chunks = [];
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const content = await page.getTextContent();
+      for (const it of content.items) {
+        chunks.push(it.str);
+        chunks.push(it.hasEOL ? '\n' : ' ');
+      }
+      chunks.push('\n');
+      page.cleanup();
+    }
+    try { await pdf.cleanup(); await pdf.destroy(); } catch(e) {}
+    const text = chunks.join('');
+    const flat = text.replace(/\n/g, ' ');
+
+    // Amount: "185.78 THB\n185.78 THBTotal:" pattern
+    const mAmt = flat.match(/([\d,]+\.\d+)\s*THB\s*[\d,]+\.\d+\s*THBTotal:/);
+    const total = mAmt ? parseFloat(mAmt[1].replace(/,/g, '')) : null;
+    if (total === null || isNaN(total)) throw new Error('อ่านยอดเงินไม่ได้');
+
+    // Date: "Receipt Date: 2026-04-01"
+    const mDate = flat.match(/Receipt Date:\s*(\d{4})-(\d{2})-(\d{2})/);
+    if (!mDate) throw new Error('หาวันที่ไม่เจอ');
+    const docDate = mDate[1] + mDate[2] + mDate[3];
+
+    // Receipt No: "Receipt No: CA2026I600021449"
+    const mRec = flat.match(/Receipt No:\s*(\S+)/);
+    const receiptNo = mRec ? mRec[1].trim() : fname.replace(/\.pdf$/i, '');
+
+    // Description: text after "Description:" until "This e-receipt"
+    const mDesc = flat.match(/Description:\s*(.+?)\s*(?:This e-receipt|$)/i);
+    const description = mDesc ? mDesc[1].trim() : '';
+
+    return {
+      _fname: fname, _error: false,
+      docDate,
+      refTo: fileToRef(fname),
+      receiptNo,
+      description,
+      total
+    };
+  }
+
+  function buildPipoFallback(fname) {
+    const d = new Date(); const pad = n => String(n).padStart(2,'0');
+    return {
+      _fname: fname, _error: true,
+      docDate: `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`,
+      refTo: fileToRef(fname),
+      receiptNo: fname.replace(/\.pdf$/i,''),
+      description: '',
+      total: 0
+    };
+  }
+
+  $('btn-parse-pipo').addEventListener('click', async () => {
+    if (!pipoState.zipFile) return;
+    const btnParse = $('btn-parse-pipo'), btnReset = $('btn-reset-pipo'), btnExport = $('btn-export-pipo');
+    btnParse.disabled = true; btnReset.disabled = true; btnExport.disabled = true;
+    pipoState.rows = []; pipoState.errors = [];
+    $('errors-list-pipo').classList.remove('show');
+    $('progress-pipo').classList.add('show');
+    const pb = $('progress-bar-pipo'), pl = $('progress-label-pipo'), pc = $('progress-count-pipo');
+
+    try {
+      pl.textContent = 'กำลังแตก ZIP…'; pb.style.width = '5%';
+      const zip = await JSZip.loadAsync(pipoState.zipFile);
+      const pdfFiles = [];
+      const seen = new Set();
+      zip.forEach((path, file) => {
+        if (file.dir) return;
+        const base = path.split('/').pop();
+        if (!base.toLowerCase().endsWith('.pdf')) return;
+        if (seen.has(base)) return;
+        seen.add(base);
+        pdfFiles.push({ base, file });
+      });
+      if (pdfFiles.length === 0) {
+        toast('ไม่พบ PDF ใน ZIP', 'error');
+        $('progress-pipo').classList.remove('show'); pb.style.width = '0%';
+        btnParse.disabled = false; btnReset.disabled = false; return;
+      }
+
+      pc.textContent = `0 / ${pdfFiles.length}`;
+      pl.textContent = 'กำลังอ่าน PDF…';
+
+      for (let i = 0; i < pdfFiles.length; i++) {
+        const { base, file } = pdfFiles[i];
+        try {
+          const buffer = await file.async('arraybuffer');
+          const row = await parsePipoPdf(buffer, base);
+          pipoState.rows.push(row);
+        } catch (err) {
+          pipoState.errors.push(`${base} · ${err.message || err}`);
+          pipoState.rows.push(buildPipoFallback(base));
+        }
+        pb.style.width = (5 + Math.round(90 * (i+1) / pdfFiles.length)) + '%';
+        pc.textContent = `${i+1} / ${pdfFiles.length}`;
+        if (i % 5 === 4) await new Promise(r => setTimeout(r, 0));
+      }
+
+      // Sort by date
+      pipoState.rows.sort((a, b) => a.docDate.localeCompare(b.docDate));
+
+      pb.style.width = '100%'; pl.textContent = 'เสร็จสิ้น';
+      setTimeout(() => { $('progress-pipo').classList.remove('show'); pb.style.width = '0%'; }, 600);
+
+      renderPipoResults();
+      if (pipoState.errors.length > 0) {
+        const ul = $('errors-list-ul-pipo'); ul.innerHTML = '';
+        pipoState.errors.forEach(e => { const li = document.createElement('li'); li.textContent = e; ul.appendChild(li); });
+        $('errors-list-pipo').classList.add('show');
+        toast(`ประมวลผลสำเร็จ · ${pipoState.rows.length} รายการ · ข้อผิดพลาด ${pipoState.errors.length}`, 'warn');
+      } else {
+        toast(`ประมวลผลสำเร็จ · ${pipoState.rows.length} รายการ`, 'success');
+      }
+      btnParse.disabled = false; btnReset.disabled = false;
+      btnExport.disabled = pipoState.rows.length === 0;
+    } catch (err) {
+      toast('ผิดพลาด: ' + err.message, 'error');
+      $('progress-pipo').classList.remove('show'); pb.style.width = '0%';
+      btnParse.disabled = false; btnReset.disabled = false;
+    }
+  });
+
+  function renderPipoResults() {
+    $('empty-pipo').style.display = 'none';
+    $('results-pipo').style.display = 'block';
+    const sum = pipoState.rows.reduce((s, r) => s + (r.total || 0), 0);
+    const dates = pipoState.rows.map(r => r.docDate).filter(Boolean).sort();
+    const fmt = d => d ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}` : '—';
+    setStatNumber($('stat-total-pipo'), pipoState.rows.length, { unit: '<span class="unit"> rows</span>' });
+    setStatNumber($('stat-pipo-sum'), sum, { fmt: formatMoney });
+    $('stat-pipo-from').textContent = fmt(dates[0]);
+    $('stat-pipo-to').textContent = fmt(dates[dates.length - 1]);
+
+    const tbody = $('preview-body-pipo');
+    tbody.innerHTML = '';
+    pipoState.rows.forEach((r, idx) => {
+      const tr = document.createElement('tr');
+      if (r._error) tr.classList.add('row-error');
+      const d = fmt(r.docDate);
+      const eb = r._error ? '<span class="tag-err">ERR</span>' : '';
+      const account = $('cfg-pipo-account').value.trim();
+      const payMethod = $('cfg-pipo-paymethod').value.trim();
+      tr.innerHTML = `
+        <td class="td-num">${idx+1}</td>
+        <td class="td-mono">${d}</td>
+        <td class="td-mono">${r.receiptNo || '—'}</td>
+        <td>${r.description || '—'}${eb}</td>
+        <td class="td-mono">${account}</td>
+        <td class="td-mono">${payMethod}</td>
+        <td class="td-amount">${(r.total||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  $('btn-reset-pipo').addEventListener('click', () => {
+    pipoState.zipFile = null; pipoState.rows = []; pipoState.errors = [];
+    fiPipo.value = '';
+    dzPipo.classList.remove('has-file');
+    $('drop-title-pipo').textContent = 'คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่';
+    $('drop-sub-pipo').textContent = 'รองรับเฉพาะไฟล์ .zip (มี PDF ข้างใน)';
+    $('btn-parse-pipo').disabled = true;
+    $('btn-export-pipo').disabled = true;
+    $('btn-reset-pipo').disabled = true;
+    $('results-pipo').style.display = 'none';
+    $('empty-pipo').style.display = 'block';
+    $('errors-list-pipo').classList.remove('show');
+    toast('รีเซ็ตเรียบร้อย');
+  });
+
+  $('btn-export-pipo').addEventListener('click', () => {
+    if (pipoState.rows.length === 0) return;
+    const contact = $('cfg-pipo-contact').value.trim();
+    const taxId = $('cfg-pipo-taxid').value.trim();
+    const account = $('cfg-pipo-account').value.trim();
+    const payMethod = $('cfg-pipo-paymethod').value.trim();
+    const branch = $('cfg-pipo-branch').value.trim() || '00000';
+
+    const headers = [
+      'ลำดับที่*','วันที่เอกสาร','อ้างอิงถึง','ผู้รับเงิน/คู่ค้า','เลขทะเบียน 13 หลัก',
+      'เลขสาขา 5 หลัก','เลขที่ใบกำกับฯ (ถ้ามี)','วันที่ใบกำกับฯ (ถ้ามี)','วันที่บันทึกภาษีซื้อ (ถ้ามี)',
+      'ประเภทราคา','บัญชี','คำอธิบาย','จำนวน','ราคาต่อหน่วย','อัตราภาษี','หัก ณ ที่จ่าย (ถ้ามี)',
+      'ชำระโดย','จำนวนเงินที่ชำระ','ภ.ง.ด. (ถ้ามี)','หมายเหตุ','กลุ่มจัดประเภท'
+    ];
+    const data = [headers];
+    pipoState.rows.forEach((r, idx) => {
+      data.push([
+        idx + 1,
+        Number(r.docDate),
+        r.refTo || '',
+        contact, taxId, branch,
+        '', '', '',          // no invoice number / invoice date / tax record date (no VAT)
+        3,                   // priceType 3 = ไม่มีภาษี
+        account,
+        r.description || '',
+        1,
+        r.total || 0,
+        'NO',                // no VAT
+        0,
+        payMethod,
+        r.total || 0,
+        '', '', ''
+      ]);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    ws['!cols'] = [
+      {wch:9},{wch:13},{wch:32},{wch:16},{wch:18},{wch:14},{wch:28},{wch:20},{wch:20},
+      {wch:11},{wch:8},{wch:28},{wch:7},{wch:13},{wch:10},{wch:18},{wch:10},{wch:17},
+      {wch:13},{wch:14},{wch:14}
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Import_Expenses');
+    const now = new Date(); const pad = n => String(n).padStart(2,'0');
+    XLSX.writeFile(wb, `PEAK_ImportExpense_PIPO_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`);
+    confettiBurst();
+    toast(`Export สำเร็จ · ${pipoState.rows.length} รายการ`, 'success');
   });
 
 </script>
