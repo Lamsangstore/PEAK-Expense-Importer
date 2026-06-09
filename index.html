@@ -1713,7 +1713,7 @@
   <div class="hero">
     <div>
       <h1 class="hero-title">ค่าโฆษณา <span class="mono">TikTok Ads</span></h1>
-      <p class="hero-desc">อัปโหลดไฟล์ Transaction Excel จาก TikTok Ads Manager ระบบจะสร้างรายการค่าโฆษณา + ภ.พ.36 ค้างจ่าย + ภาษีขาย ภ.พ.36 ตามรูปแบบ PEAK Import_Expenses</p>
+      <p class="hero-desc">อัปโหลดไฟล์ Invoice list Excel จาก TikTok Ads Manager ระบบจะสร้างรายการค่าโฆษณา + ภ.พ.36 ค้างจ่าย + ภาษีขาย ภ.พ.36 ตามรูปแบบ PEAK Import_Expenses</p>
     </div>
     <div class="steps">
       <span>1 · UPLOAD</span><span class="chev">›</span>
@@ -1727,8 +1727,8 @@
     <div class="card">
       <div class="card-header">
         <div>
-          <div class="card-title">1. อัปโหลดไฟล์ Transaction</div>
-          <div class="card-sub">Export จาก TikTok Ads: Transactions → Download Excel</div>
+          <div class="card-title">1. อัปโหลดไฟล์ Invoice list</div>
+          <div class="card-sub">Export จาก TikTok Ads: Billing → Invoices → Download Excel</div>
         </div>
         <span class="card-badge">XLSX / CSV</span>
       </div>
@@ -1740,7 +1740,7 @@
         </div>
         <div>
           <div class="drop-title" id="drop-title-tt">คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่</div>
-          <div class="drop-sub" id="drop-sub-tt">รองรับ .xlsx / .xls / .csv (Transaction export)</div>
+          <div class="drop-sub" id="drop-sub-tt">รองรับ .xlsx / .xls / .csv (Invoice list export)</div>
         </div>
       </label>
 
@@ -3230,6 +3230,15 @@
         time: `${m[4]}:${m[5]}:${m[6]}`
       };
     }
+    const md = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (md) {
+      return {
+        date: new Date(+md[1], +md[2]-1, +md[3]),
+        yyyymmdd: `${md[1]}${md[2]}${md[3]}`,
+        display: `${md[3]}/${md[2]}/${md[1]}`,
+        time: ''
+      };
+    }
     // Fallback Date.parse
     const d = new Date(str);
     if (!isNaN(d.getTime())) {
@@ -3273,10 +3282,10 @@
       const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
 
       pb.style.width = '30%';
-      pl.textContent = 'กำลังค้นหา sheet Payments…';
+      pl.textContent = 'กำลังค้นหา sheet…';
 
-      // Prefer "Payments" sheet; fallback to first sheet
-      let sheetName = wb.SheetNames.find(n => n.toLowerCase() === 'payments') || wb.SheetNames[0];
+      // Use first sheet (Invoice list export typically has 1 sheet named "sheet0")
+      const sheetName = wb.SheetNames[0];
       const sheet = wb.Sheets[sheetName];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
 
@@ -3285,12 +3294,12 @@
       pb.style.width = '50%';
       pl.textContent = 'กำลังค้นหา column header…';
 
-      // Find header row (the row that has "Transaction time" / "Transaction ID" etc.)
+      // Find header row — Invoice list has "Invoice No." / "Issue date" / "Invoice amount (w/ tax)"
       let headerIdx = -1;
       for (let i = 0; i < Math.min(rows.length, 5); i++) {
         const r = rows[i] || [];
         const low = r.map(c => String(c || '').toLowerCase());
-        if (low.includes('transaction time') || low.includes('transaction id')) {
+        if (low.includes('invoice no.') || low.includes('issue date')) {
           headerIdx = i; break;
         }
       }
@@ -3298,15 +3307,16 @@
       const header = rows[headerIdx].map(c => String(c || '').toLowerCase().trim());
 
       const colIdx = {
-        time: header.indexOf('transaction time'),
-        id: header.indexOf('transaction id'),
-        method: header.indexOf('payment method'),
-        status: header.indexOf('status'),
-        amount: header.indexOf('amount'),
-        type: header.indexOf('transaction type')
+        id:          header.indexOf('invoice no.'),
+        time:        header.indexOf('issue date'),
+        amount:      header.indexOf('invoice amount (w/ tax)'),
+        amountNet:   header.indexOf('invoice amount (w/o tax)'),
+        invStatus:   header.indexOf('invoice status'),
+        payStatus:   header.indexOf('payment status'),
+        creditNote:  header.indexOf('linked credit note no.')
       };
-      if (colIdx.time < 0 || colIdx.id < 0 || colIdx.amount < 0) {
-        throw new Error('ไม่พบ column: Transaction time / Transaction ID / Amount');
+      if (colIdx.id < 0 || colIdx.time < 0 || colIdx.amount < 0) {
+        throw new Error('ไม่พบ column: Invoice No. / Issue date / Invoice amount (w/ tax)');
       }
 
       pb.style.width = '60%';
@@ -3318,29 +3328,35 @@
       for (let i = 0; i < dataRows.length; i++) {
         const r = dataRows[i] || [];
         if (r.every(c => c == null || c === '')) continue;
-        const tRaw = r[colIdx.time];
         const idRaw = r[colIdx.id];
+        const tRaw  = r[colIdx.time];
         const amtRaw = r[colIdx.amount];
-        const mRaw = colIdx.method >= 0 ? r[colIdx.method] : '';
-        const statusRaw = colIdx.status >= 0 ? r[colIdx.status] : '';
-        const typeRaw = colIdx.type >= 0 ? r[colIdx.type] : '';
-        if (!tRaw || !idRaw || amtRaw == null) {
+        const invStatusRaw = colIdx.invStatus >= 0 ? r[colIdx.invStatus] : '';
+        const payStatusRaw = colIdx.payStatus >= 0 ? r[colIdx.payStatus] : '';
+        const cnRaw = colIdx.creditNote >= 0 ? r[colIdx.creditNote] : '';
+        if (!idRaw || !tRaw || amtRaw == null || amtRaw === '') {
           skipped.push(`row ${headerIdx + 2 + i} · ข้อมูลไม่ครบ`);
+          continue;
+        }
+        // Skip invoices that have a linked credit note (already credited / cancelled)
+        if (cnRaw && String(cnRaw).trim() !== '') {
+          skipped.push(`row ${headerIdx + 2 + i} · ${String(idRaw).trim()} มี Credit Note (${String(cnRaw).trim()}) — ข้าม`);
           continue;
         }
         const tm = parseTxTime(tRaw);
         const amt = parseAmount(amtRaw);
         if (!tm || isNaN(amt)) {
-          skipped.push(`row ${headerIdx + 2 + i} · parse เวลา/จำนวนไม่ได้`);
+          skipped.push(`row ${headerIdx + 2 + i} · parse วันที่/จำนวนไม่ได้`);
           continue;
         }
         parsed.push({
           timeRaw: tRaw, timeParsed: tm,
           id: String(idRaw).trim(),
-          method: String(mRaw || '').trim(),
-          status: String(statusRaw || '').trim(),
+          method: '',
+          status: String(invStatusRaw || '').trim(),
+          payStatus: String(payStatusRaw || '').trim(),
           amount: amt,
-          txType: String(typeRaw || '').trim()
+          txType: ''
         });
       }
 
@@ -3409,9 +3425,9 @@
         pgd: '', note: '', category: ''
       });
 
-      // Row group ลำดับที่ 1: expense rows (1 per transaction)
+      // Row group ลำดับที่ 1: expense rows (1 per invoice)
       parsed.forEach(tx => {
-        const desc = `${descPrefix} วันที่ ${tx.timeParsed.display} เวลา ${tx.timeParsed.time} ID ธุรกรรม ${tx.id} /${tx.method || '-'} /${tx.txType || '-'}`;
+        const desc = `${descPrefix} วันที่ ${tx.timeParsed.display} เลขที่ใบกำกับ ${tx.id}`;
         out.push({
           _type: 'EXPENSE',
           groupSeq: 1,
@@ -3522,7 +3538,7 @@
     fiTt.value = '';
     dzTt.classList.remove('has-file');
     $('drop-title-tt').textContent = 'คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่';
-    $('drop-sub-tt').textContent = 'รองรับ .xlsx / .xls / .csv (Transaction export)';
+    $('drop-sub-tt').textContent = 'รองรับ .xlsx / .xls / .csv (Invoice list export)';
     $('btn-parse-tt').disabled = true;
     $('btn-export-tt').disabled = true;
     $('btn-reset-tt').disabled = true;
