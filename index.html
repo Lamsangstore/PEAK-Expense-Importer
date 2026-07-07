@@ -1849,11 +1849,11 @@
         <div class="method-map" id="method-map"></div>
         <button class="method-add-btn" id="btn-add-method">+ เพิ่ม Mapping</button>
         <div class="method-help">
-          <strong>Default</strong>: ถ้าไม่ match กับรายการใดเลย จะใช้ <code id="method-default-display">EWL003</code>
+          <strong>Default</strong>: ถ้าไม่ match กับรายการใดเลย จะใช้ <code id="method-default-display">ADV001</code>
         </div>
         <div class="config-row" style="margin-top: 8px;">
           <div class="config-label">Default</div>
-          <input class="config-input" id="cfg-tt-method-default" value="EWL003" />
+          <input class="config-input" id="cfg-tt-method-default" value="ADV001" />
         </div>
       </div>
     </div>
@@ -1886,6 +1886,24 @@
     <div class="errors-list" id="pdf-match-tt" style="margin-top:0; margin-bottom:20px;">
       <div class="errors-list-title" id="pdf-match-title-tt">ผลการจับคู่ PDF</div>
       <ul id="pdf-match-ul-tt"></ul>
+    </div>
+
+    <div class="table-wrap" id="pay-summary-tt" style="margin-bottom:20px;">
+      <div class="table-header">
+        <div><div class="table-title">สรุปยอดตามช่องทางชำระ</div></div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>ชำระโดย</th><th>Payment method</th>
+              <th style="text-align:right">จำนวนรายการ</th>
+              <th style="text-align:right">ยอดรวม</th>
+            </tr>
+          </thead>
+          <tbody id="pay-summary-body-tt"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="table-wrap">
@@ -3332,13 +3350,9 @@
   // With Transactions attached, method is the real one (GMV Pay / Credit or debit
   // card / Balance / QR code payment). Otherwise it is derived from the Invoice
   // list "Linked transaction report No." prefix: ST → Autopay, RE → Top-up Prepay
+  // EWL003 only for GMV Pay; every other method falls through to the default (ADV001)
   const defaultMethodMap = [
-    { match: 'GMV Pay',              code: 'EWL003' },
-    { match: 'Credit or debit card', code: 'ADV001' },
-    { match: 'Balance',              code: 'EWL003' },
-    { match: 'QR code payment',      code: 'EWL003' },
-    { match: 'Autopay',              code: 'EWL003' },
-    { match: 'Top-up Prepay',        code: 'EWL003' }
+    { match: 'GMV Pay', code: 'EWL003' }
   ];
   let methodMap = JSON.parse(JSON.stringify(defaultMethodMap));
 
@@ -3380,7 +3394,7 @@
   });
 
   function resolvePaymentMethod(paymentMethodText) {
-    const defaultCode = $('cfg-tt-method-default').value.trim() || 'EWL003';
+    const defaultCode = $('cfg-tt-method-default').value.trim() || 'ADV001';
     if (!paymentMethodText) return defaultCode;
     const lower = String(paymentMethodText).toLowerCase();
     for (const m of methodMap) {
@@ -3969,7 +3983,43 @@
     setStatNumber($('stat-tt-sum'), ttState.totalSum, { fmt: formatMoney });
     setStatNumber($('stat-tt-pp36'), ttState.pp36, { fmt: formatMoney });
     renderTtPdfMatch();
+    renderTtPaySummary();
     renderTtTable();
+  }
+
+  // Totals per pay-channel code (expense rows only — ภ.พ.36 rows excluded)
+  function renderTtPaySummary() {
+    const tbody = $('pay-summary-body-tt');
+    tbody.innerHTML = '';
+    const groups = new Map(); // code → { count, sum, methods:Set }
+    ttState.rows.forEach(r => {
+      if (r._type !== 'EXPENSE') return;
+      const code = r.payMethod || '—';
+      if (!groups.has(code)) groups.set(code, { count: 0, sum: 0, methods: new Set() });
+      const g = groups.get(code);
+      g.count++;
+      g.sum += r.paidAmount;
+      if (r._method) g.methods.add(r._method);
+    });
+    const fmt = n => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    let totalCount = 0, totalSum = 0;
+    [...groups.entries()].sort((a, b) => b[1].sum - a[1].sum).forEach(([code, g]) => {
+      totalCount += g.count; totalSum += g.sum;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="td-mono">${code}</td>
+        <td>${[...g.methods].join(', ') || '—'}</td>
+        <td class="td-mono" style="text-align:right">${g.count}</td>
+        <td class="td-amount">${fmt(g.sum)}</td>`;
+      tbody.appendChild(tr);
+    });
+    const trTotal = document.createElement('tr');
+    trTotal.innerHTML = `
+      <td class="td-mono" style="font-weight:700">รวม</td>
+      <td></td>
+      <td class="td-mono" style="text-align:right; font-weight:700">${totalCount}</td>
+      <td class="td-amount" style="font-weight:700">${fmt(totalSum)}</td>`;
+    tbody.appendChild(trTotal);
   }
 
   function renderTtPdfMatch() {
