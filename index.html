@@ -1773,6 +1773,14 @@
         </div>
       </label>
 
+      <label class="dropzone" id="dropzone-tt-txn" style="margin-top:10px; padding:18px 24px;">
+        <input type="file" id="fileInput-tt-txn" accept=".xlsx,.xls,.csv" multiple />
+        <div>
+          <div class="drop-title" id="drop-title-tt-txn">แนบไฟล์ Transactions (ไม่บังคับ)</div>
+          <div class="drop-sub" id="drop-sub-tt-txn">เลือกได้หลายไฟล์ · ใช้ระบุ Payment method จริงต่อใบกำกับ (GMV Pay / บัตร / Balance / QR)</div>
+        </div>
+      </label>
+
       <div class="progress" id="progress-tt">
         <div class="progress-text">
           <span id="progress-label-tt">กำลังประมวลผล…</span>
@@ -1836,7 +1844,7 @@
       <div class="config-group">
         <div class="config-group-title">Payment Method Mapping</div>
         <div class="method-help">
-          จับคู่คำใน "Payment method" → รหัสช่องทางการเงิน (ค้นหาแบบ contains, ไม่สนใจตัวใหญ่/เล็ก)
+          ถ้าแนบไฟล์ Transactions จะใช้ Payment method จริงต่อใบกำกับ (GMV Pay / Credit or debit card / Balance / QR code payment) · ถ้าไม่แนบ ใช้ประเภทจาก Invoice list: <code>ST</code> = <strong>Autopay</strong> · <code>RE</code> = <strong>Top-up Prepay</strong> · จับคู่แบบ contains ไม่สนใจตัวใหญ่/เล็ก
         </div>
         <div class="method-map" id="method-map"></div>
         <button class="method-add-btn" id="btn-add-method">+ เพิ่ม Mapping</button>
@@ -3309,6 +3317,8 @@
     zipFiles: [],    // optional ZIP files containing invoice PDFs
     pdfInv: null,    // Set of invoice numbers found in PDF filenames
     pdfMatch: null,  // { total, matched, missing[], extra[], pdfCount }
+    txnFiles: [],    // optional Transactions exports (real payment method per invoice)
+    txnMethod: null, // Map invoice no. → { method, time }
     rawTx: [],     // raw transactions from source
     rows: [],      // final PEAK rows
     errors: [],
@@ -3319,9 +3329,16 @@
   };
 
   // ----- Method mapping CRUD UI -----
+  // With Transactions attached, method is the real one (GMV Pay / Credit or debit
+  // card / Balance / QR code payment). Otherwise it is derived from the Invoice
+  // list "Linked transaction report No." prefix: ST → Autopay, RE → Top-up Prepay
   const defaultMethodMap = [
-    { match: 'GMV Pay',      code: 'EWL003' },
-    { match: 'Credit or debit card', code: 'ADV001' }
+    { match: 'GMV Pay',              code: 'EWL003' },
+    { match: 'Credit or debit card', code: 'ADV001' },
+    { match: 'Balance',              code: 'EWL003' },
+    { match: 'QR code payment',      code: 'EWL003' },
+    { match: 'Autopay',              code: 'EWL003' },
+    { match: 'Top-up Prepay',        code: 'EWL003' }
   ];
   let methodMap = JSON.parse(JSON.stringify(defaultMethodMap));
 
@@ -3332,7 +3349,7 @@
       const row = document.createElement('div');
       row.className = 'method-map-row';
       row.innerHTML = `
-        <input type="text" placeholder="คำที่ match (เช่น GMV Pay)" data-k="match" data-i="${i}" value="${m.match.replace(/"/g,'&quot;')}"/>
+        <input type="text" placeholder="คำที่ match (เช่น Autopay)" data-k="match" data-i="${i}" value="${m.match.replace(/"/g,'&quot;')}"/>
         <input type="text" placeholder="รหัส (EWL003)" data-k="code" data-i="${i}" value="${m.code.replace(/"/g,'&quot;')}"/>
         <button class="method-map-del" data-del="${i}" title="ลบ">✕</button>
       `;
@@ -3445,6 +3462,49 @@
       dzTtZip.classList.remove('has-file');
       $('drop-title-tt-zip').textContent = 'แนบ ZIP ใบกำกับ PDF (ไม่บังคับ)';
       $('drop-sub-tt-zip').textContent = 'เลือกได้หลายไฟล์ · ใช้ตรวจสอบว่า PDF ครบทุกใบกำกับใน Invoice list';
+    }
+  }
+
+  // ----- Optional Transactions upload (multiple files, accumulated) -----
+  const dzTtTxn = $('dropzone-tt-txn');
+  const fiTtTxn = $('fileInput-tt-txn');
+  ['dragenter','dragover'].forEach(ev => dzTtTxn.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzTtTxn.classList.add('active');
+  }));
+  ['dragleave','drop'].forEach(ev => dzTtTxn.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzTtTxn.classList.remove('active');
+  }));
+  dzTtTxn.addEventListener('drop', e => addTtTxns(e.dataTransfer.files));
+  fiTtTxn.addEventListener('change', e => { addTtTxns(e.target.files); fiTtTxn.value = ''; });
+
+  function addTtTxns(fileList) {
+    const files = Array.from(fileList).filter(f => /\.(xlsx|xls|csv)$/i.test(f.name));
+    if (files.length === 0) { toast('รองรับเฉพาะไฟล์ .xlsx / .xls / .csv', 'error'); return; }
+    let added = 0;
+    files.forEach(f => {
+      if (!ttState.txnFiles.some(t => t.name === f.name && t.size === f.size)) {
+        ttState.txnFiles.push(f); added++;
+      }
+    });
+    updateTtTxnLabel();
+    if (added > 0) {
+      toast(`เพิ่ม ${added} ไฟล์ Transactions · รวม ${ttState.txnFiles.length} ไฟล์`);
+      $('btn-reset-tt').disabled = false;
+    } else {
+      toast('ไฟล์นี้ถูกเพิ่มไว้แล้ว', 'warn');
+    }
+  }
+
+  function updateTtTxnLabel() {
+    const n = ttState.txnFiles.length;
+    if (n > 0) {
+      dzTtTxn.classList.add('has-file');
+      $('drop-title-tt-txn').textContent = `${n} ไฟล์ Transactions (คลิกเพื่อเพิ่มอีก)`;
+      $('drop-sub-tt-txn').textContent = ttState.txnFiles.map(f => f.name).join(' · ');
+    } else {
+      dzTtTxn.classList.remove('has-file');
+      $('drop-title-tt-txn').textContent = 'แนบไฟล์ Transactions (ไม่บังคับ)';
+      $('drop-sub-tt-txn').textContent = 'เลือกได้หลายไฟล์ · ใช้ระบุ Payment method จริงต่อใบกำกับ (GMV Pay / บัตร / Balance / QR)';
     }
   }
 
@@ -3573,7 +3633,8 @@
         amountNet:   header.indexOf('invoice amount (w/o tax)'),
         invStatus:   header.indexOf('invoice status'),
         payStatus:   header.indexOf('payment status'),
-        creditNote:  header.indexOf('linked credit note no.')
+        creditNote:  header.indexOf('linked credit note no.'),
+        report:      header.indexOf('linked transaction report no.')
       };
       if (colIdx.id < 0 || colIdx.time < 0 || colIdx.amount < 0) {
         throw new Error('ไม่พบ column: Invoice No. / Issue date / Invoice amount (w/ tax)');
@@ -3613,10 +3674,14 @@
           skipped.push(`row ${headerIdx + 2 + i} · parse วันที่/จำนวนไม่ได้`);
           continue;
         }
+        // Payment type from "Linked transaction report No." prefix:
+        // ST = Autopay (auto-billed per threshold), RE = Top-up Prepay (manual balance top-up)
+        const repRaw = colIdx.report >= 0 ? String(r[colIdx.report] || '').trim() : '';
+        const method = repRaw.startsWith('RE') ? 'Top-up Prepay' : repRaw.startsWith('ST') ? 'Autopay' : '';
         parsed.push({
           timeRaw: tRaw, timeParsed: tm,
           id: String(idRaw).trim(),
-          method: '',
+          method,
           status: String(invStatusRaw || '').trim(),
           payStatus: String(payStatusRaw || '').trim(),
           amount: amt,
@@ -3627,6 +3692,54 @@
       if (parsed.length === 0) throw new Error('ไม่พบข้อมูล transactions ที่ใช้ได้');
       ttState.rawTx = parsed;
       ttState.errors = skipped;
+
+      // ----- Real payment method per invoice from Transactions exports (optional) -----
+      // Each transaction row lists paid invoices in "Document" and the method in
+      // "Description" (Payment method:\n...). One bill payment can cover many invoices.
+      ttState.txnMethod = null;
+      if (ttState.txnFiles.length > 0) {
+        pb.style.width = '62%';
+        pl.textContent = 'กำลังอ่านไฟล์ Transactions…';
+        const map = new Map(); // invoice no. → { method, time } — latest transaction wins
+        for (const tf of ttState.txnFiles) {
+          const twb = XLSX.read(await tf.arrayBuffer(), { type: 'array' });
+          const trows = XLSX.utils.sheet_to_json(twb.Sheets[twb.SheetNames[0]], { header: 1, raw: true, defval: null });
+          let hIdx = -1;
+          for (let i = 0; i < Math.min(trows.length, 5); i++) {
+            const low = (trows[i] || []).map(c => String(c || '').toLowerCase().trim());
+            if (low.includes('document') && low.includes('description')) { hIdx = i; break; }
+          }
+          if (hIdx === -1) {
+            skipped.push(`${tf.name} · ไม่พบ column Document / Description — ข้ามไฟล์นี้`);
+            continue;
+          }
+          const th = trows[hIdx].map(c => String(c || '').toLowerCase().trim());
+          const cDesc = th.indexOf('description'), cDoc = th.indexOf('document');
+          const cStat = th.indexOf('status'), cTime = th.indexOf('transaction time');
+          for (const tr of trows.slice(hIdx + 1)) {
+            if (!tr || !tr[cDoc]) continue;
+            if (cStat >= 0 && String(tr[cStat] || '').trim().toLowerCase() !== 'success') continue;
+            const dm = String(tr[cDesc] || '').match(/payment method:\s*([^\n]+)/i);
+            if (!dm) continue;
+            const method = dm[1].trim();
+            const time = cTime >= 0 ? String(tr[cTime] || '') : '';
+            const docs = String(tr[cDoc]).match(/THTT\w+/g) || [];
+            for (const inv of docs) {
+              const prev = map.get(inv);
+              if (!prev || time >= prev.time) map.set(inv, { method, time });
+            }
+          }
+        }
+        ttState.txnMethod = map;
+        let covered = 0;
+        parsed.forEach(tx => {
+          const hit = map.get(tx.id);
+          if (hit) { tx.method = hit.method; covered++; }
+        });
+        if (covered < parsed.length) {
+          skipped.push(`Transactions ระบุ Payment method ได้ ${covered}/${parsed.length} ใบ — ที่เหลือใช้ประเภท Autopay/Top-up จาก Invoice list แทน`);
+        }
+      }
 
       // ----- Match invoice PDFs from ZIP files (by invoice no. in filename) -----
       ttState.pdfInv = null;
@@ -3725,6 +3838,7 @@
         out.push({
           _type: 'EXPENSE',
           _hasPdf: ttState.pdfInv ? !!tx.hasPdf : null,
+          _method: tx.method,
           groupSeq: 1,
           docDate, refTo: tx.id,
           contact, taxId, branch: '',
@@ -3896,6 +4010,16 @@
     }
   }
 
+  // Short label for the payment method shown next to the pay code
+  function ttMethodTag(method) {
+    const short = {
+      'GMV Pay': 'GMV', 'Credit or debit card': 'CARD', 'Balance': 'BAL',
+      'QR code payment': 'QR', 'Autopay': '', 'Top-up Prepay': 'TOP-UP'
+    };
+    const label = short[method] !== undefined ? short[method] : (method || '');
+    return label ? ` <span style="color:var(--text-3);font-size:10px">${label}</span>` : '';
+  }
+
   function renderTtTable() {
     const tbody = $('preview-body-tt');
     tbody.innerHTML = '';
@@ -3933,7 +4057,7 @@
         <td class="td-mono">${r.account}</td>
         <td class="td-desc-sm" title="${r.description.replace(/"/g,'&quot;')}">${r.description}</td>
         <td class="td-mono">${r.vatRate === 'NO' ? 'NO' : (r.vatRate*100).toFixed(0)+'%'}</td>
-        <td class="td-mono">${r.payMethod || '—'}</td>
+        <td class="td-mono" title="${r._method || ''}">${r.payMethod || '—'}${ttMethodTag(r._method)}</td>
         <td style="text-align:center">${pdfCell}</td>
         <td class="td-amount ${amtClass}">${amtStr}</td>`;
       tbody.appendChild(tr);
@@ -3952,9 +4076,11 @@
   $('btn-reset-tt').addEventListener('click', () => {
     ttState.file = null; ttState.rawTx = []; ttState.rows = []; ttState.errors = [];
     ttState.zipFiles = []; ttState.pdfInv = null; ttState.pdfMatch = null;
+    ttState.txnFiles = []; ttState.txnMethod = null;
     ttState.currentFilter = 'all';
-    fiTt.value = ''; fiTtZip.value = '';
+    fiTt.value = ''; fiTtZip.value = ''; fiTtTxn.value = '';
     updateTtZipLabel();
+    updateTtTxnLabel();
     $('pdf-match-tt').classList.remove('show', 'ok');
     $('stat-pdf-tt').style.display = 'none';
     dzTt.classList.remove('has-file');
