@@ -3900,6 +3900,70 @@
     }
   });
 
+  // Every TikTok invoice PDF embeds the same fonts/logo (~60KB per file), so a
+  // naive merge balloons. Replace byte-identical streams with one shared object.
+  function dedupTtPdfStreams(doc) {
+    const ctx = doc.context;
+    const seen = new Map();   // contentKey → canonical PDFRef
+    const remap = new Map();  // dup ref tag → canonical PDFRef
+    const dupRefs = [];
+    for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
+      if (!(obj instanceof PDFLib.PDFRawStream)) continue;
+      const bytes = obj.contents;
+      let h = 2166136261;
+      for (let i = 0; i < bytes.length; i++) { h = ((h ^ bytes[i]) * 16777619) >>> 0; }
+      const key = `${bytes.length}:${h}:${obj.dict.toString()}`;
+      const canon = seen.get(key);
+      if (canon) { remap.set(ref.toString(), canon); dupRefs.push(ref); }
+      else seen.set(key, ref);
+    }
+    if (remap.size === 0) return 0;
+    const replaceIn = (obj) => {
+      if (obj instanceof PDFLib.PDFDict) {
+        for (const [k, v] of obj.entries()) {
+          if (v instanceof PDFLib.PDFRef) {
+            const r = remap.get(v.toString());
+            if (r) obj.set(k, r);
+          } else replaceIn(v);
+        }
+      } else if (obj instanceof PDFLib.PDFArray) {
+        for (let i = 0; i < obj.size(); i++) {
+          const v = obj.get(i);
+          if (v instanceof PDFLib.PDFRef) {
+            const r = remap.get(v.toString());
+            if (r) obj.set(i, r);
+          } else replaceIn(v);
+        }
+      } else if (obj instanceof PDFLib.PDFStream) {
+        replaceIn(obj.dict);
+      }
+    };
+    for (const [ref, obj] of ctx.enumerateIndirectObjects()) {
+      if (remap.has(ref.toString())) continue;
+      replaceIn(obj);
+    }
+    dupRefs.forEach(ref => ctx.delete(ref));
+    return remap.size;
+  }
+
+  // Split per-invoice page counts into n groups of roughly equal page totals;
+  // returns arrays of page indices (invoices never split across parts)
+  function chunkTtInvoicePages(pageCounts, n) {
+    const totalPages = pageCounts.reduce((s, c) => s + c, 0);
+    const target = totalPages / n;
+    const chunks = [];
+    let current = [], pageIdx = 0, used = 0;
+    for (const count of pageCounts) {
+      if (current.length > 0 && used + count > target * (chunks.length + 1) && chunks.length < n - 1) {
+        chunks.push(current); current = [];
+      }
+      for (let p = 0; p < count; p++) current.push(pageIdx++);
+      used += count;
+    }
+    if (current.length > 0) chunks.push(current);
+    return chunks;
+  }
+
   // ----- Merge invoice PDFs of imported rows into one file (same order as Excel) -----
   $('btn-pdf-tt').addEventListener('click', async () => {
     if (ttState.rawTx.length === 0 || ttState.zipFiles.length === 0) return;
@@ -3924,6 +3988,7 @@
       }
       const merged = await PDFLib.PDFDocument.create();
       const missing = [];
+      const invoicePageCounts = []; // pages per added invoice — for size-based splitting
       let done = 0;
       for (const tx of ttState.rawTx) {
         const entry = entries.get(tx.id);
@@ -3934,6 +3999,7 @@
           const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true, parseSpeed: PDFLib.ParseSpeeds.Fastest });
           const pages = await merged.copyPages(src, src.getPageIndices());
           pages.forEach(p => merged.addPage(p));
+          invoicePageCounts.push(pages.length);
         }
         done++;
         if (done % 10 === 0 || done === ttState.rawTx.length) {
@@ -3944,27 +4010,66 @@
         }
       }
       if (merged.getPageCount() === 0) throw new Error('ไม่พบ PDF ที่ตรงกับรายการนำเข้าเลย');
+      pl.textContent = 'กำลังลดขนาดไฟล์ (ตัดข้อมูลซ้ำ)…';
+      pb.style.width = '92%';
+      await new Promise(r => setTimeout(r, 50));
+      dedupTtPdfStreams(merged);
       pl.textContent = 'กำลังสร้างไฟล์…';
       pb.style.width = '95%';
       await new Promise(r => setTimeout(r, 50));
       // default save (object streams + yielding every 50 objects) takes minutes on ~700 pages
       const out = await merged.save({ useObjectStreams: false, objectsPerTick: Infinity });
-      const blob = new Blob([out], { type: 'application/pdf' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
       const ym = ttState.docDate ? ttState.docDate.slice(0, 6) : '';
-      a.download = `TikTokAds_Invoices_${ym}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      const MAX_BYTES = window.TT_PDF_MAX_BYTES || 25 * 1024 * 1024; // PEAK attachment limit
+      const downloadBytes = (bytes, name) => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      };
+      const mb = n => (n / 1048576).toFixed(1);
+      let fileNote = '';
+      if (out.length <= MAX_BYTES) {
+        downloadBytes(out, `TikTokAds_Invoices_${ym}.pdf`);
+        fileNote = `${mb(out.length)} MB`;
+      } else {
+        // Over the limit even after dedup — split at invoice boundaries
+        let nParts = Math.max(2, Math.ceil(out.length / (MAX_BYTES * 0.9)));
+        let saved = null;
+        for (let attempt = 0; attempt < 4 && !saved; attempt++, nParts++) {
+          const chunks = chunkTtInvoicePages(invoicePageCounts, nParts);
+          const bufs = [];
+          let ok = true;
+          for (let ci = 0; ci < chunks.length; ci++) {
+            pl.textContent = `กำลังสร้างไฟล์ส่วนที่ ${ci + 1}/${chunks.length}…`;
+            await new Promise(r => setTimeout(r, 0));
+            const part = await PDFLib.PDFDocument.create();
+            const pages = await part.copyPages(merged, chunks[ci]);
+            pages.forEach(p => part.addPage(p));
+            dedupTtPdfStreams(part);
+            const partBytes = await part.save({ useObjectStreams: false, objectsPerTick: Infinity });
+            if (partBytes.length > MAX_BYTES) { ok = false; break; }
+            bufs.push(partBytes);
+          }
+          if (ok) saved = bufs;
+        }
+        if (!saved) throw new Error('แบ่งไฟล์ให้ต่ำกว่า 25 MB ไม่สำเร็จ');
+        for (let i = 0; i < saved.length; i++) {
+          downloadBytes(saved[i], `TikTokAds_Invoices_${ym}_part${i + 1}of${saved.length}.pdf`);
+          await new Promise(r => setTimeout(r, 500));
+        }
+        fileNote = `${saved.length} ไฟล์ · ${saved.map(b => mb(b.length)).join(' + ')} MB`;
+      }
       pb.style.width = '100%';
       pl.textContent = 'เสร็จสิ้น';
       setTimeout(() => { $('progress-tt').classList.remove('show'); pb.style.width = '0%'; }, 600);
       if (missing.length > 0) {
-        toast(`รวม PDF สำเร็จ ${ttState.rawTx.length - missing.length} ใบ · ขาด ${missing.length} ใบ (ไม่มีใน ZIP)`, 'warn');
+        toast(`รวม PDF สำเร็จ ${ttState.rawTx.length - missing.length} ใบ (${fileNote}) · ขาด ${missing.length} ใบ (ไม่มีใน ZIP)`, 'warn');
       } else {
-        toast(`รวม PDF สำเร็จ · ${ttState.rawTx.length} ใบกำกับ · ${merged.getPageCount()} หน้า`, 'success');
+        toast(`รวม PDF สำเร็จ · ${ttState.rawTx.length} ใบกำกับ · ${merged.getPageCount()} หน้า · ${fileNote}`, 'success');
       }
     } catch (err) {
       console.error(err);
