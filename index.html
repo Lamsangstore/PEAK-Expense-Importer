@@ -31,6 +31,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- JSZip -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- pdf-lib (merge invoice PDFs) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <!-- SheetJS -->
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 
@@ -1380,6 +1382,11 @@
     padding: 14px 16px;
     display: none;
   }
+  .errors-list.ok {
+    background: var(--success-soft);
+    border-color: var(--success);
+  }
+  .errors-list.ok .errors-list-title { color: var(--success); }
   .errors-list.show {
     display: block;
     animation: errorsIn 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.2);
@@ -1727,7 +1734,7 @@
   <div class="hero">
     <div>
       <h1 class="hero-title">ค่าโฆษณา <span class="mono">TikTok Ads</span></h1>
-      <p class="hero-desc">อัปโหลดไฟล์ Invoice list Excel จาก TikTok Ads Manager ระบบจะสร้างรายการค่าโฆษณา + ภ.พ.36 ค้างจ่าย + ภาษีขาย ภ.พ.36 ตามรูปแบบ PEAK Import_Expenses</p>
+      <p class="hero-desc">อัปโหลดไฟล์ Invoice list Excel จาก TikTok Ads Manager ระบบจะสร้างรายการค่าโฆษณา + ภ.พ.36 ค้างจ่าย + ภาษีขาย ภ.พ.36 ตามรูปแบบ PEAK Import_Expenses · แนบ ZIP ใบกำกับ PDF (หลายไฟล์ได้) เพื่อตรวจสอบว่า PDF ครบทุกใบกำกับ</p>
     </div>
     <div class="steps">
       <span>1 · UPLOAD</span><span class="chev">›</span>
@@ -1755,6 +1762,14 @@
         <div>
           <div class="drop-title" id="drop-title-tt">คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่</div>
           <div class="drop-sub" id="drop-sub-tt">รองรับ .xlsx / .xls / .csv (Invoice list export)</div>
+        </div>
+      </label>
+
+      <label class="dropzone" id="dropzone-tt-zip" style="margin-top:10px; padding:18px 24px;">
+        <input type="file" id="fileInput-tt-zip" accept=".zip" multiple />
+        <div>
+          <div class="drop-title" id="drop-title-tt-zip">แนบ ZIP ใบกำกับ PDF (ไม่บังคับ)</div>
+          <div class="drop-sub" id="drop-sub-tt-zip">เลือกได้หลายไฟล์ · ใช้ตรวจสอบว่า PDF ครบทุกใบกำกับใน Invoice list</div>
         </div>
       </label>
 
@@ -1837,7 +1852,7 @@
   </div>
 
   <div id="results-tt" style="display:none;">
-    <div class="summary-grid">
+    <div class="summary-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));">
       <div class="stat">
         <div class="stat-label">Total Rows</div>
         <div class="stat-value" id="stat-total-tt">0</div>
@@ -1854,6 +1869,15 @@
         <div class="stat-label">ภ.พ.36 (7%)</div>
         <div class="stat-value warn" id="stat-tt-pp36" style="font-size:19px">0.00</div>
       </div>
+      <div class="stat" id="stat-pdf-tt" style="display:none;">
+        <div class="stat-label">PDF จับคู่ได้</div>
+        <div class="stat-value" id="stat-tt-pdf">—</div>
+      </div>
+    </div>
+
+    <div class="errors-list" id="pdf-match-tt" style="margin-top:0; margin-bottom:20px;">
+      <div class="errors-list-title" id="pdf-match-title-tt">ผลการจับคู่ PDF</div>
+      <ul id="pdf-match-ul-tt"></ul>
     </div>
 
     <div class="table-wrap">
@@ -1871,6 +1895,7 @@
             <tr>
               <th>#</th><th>ลำดับ</th><th>Type</th><th>บัญชี</th>
               <th>คำอธิบาย</th><th>ภาษี</th><th>ชำระโดย</th>
+              <th style="text-align:center">PDF</th>
               <th style="text-align:right">ยอด</th>
             </tr>
           </thead>
@@ -1898,6 +1923,10 @@
     <button class="btn btn-success" id="btn-export-tt" disabled>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       Export Excel
+    </button>
+    <button class="btn btn-success" id="btn-pdf-tt" disabled title="รวมใบกำกับ PDF ของรายการที่นำเข้าเป็นไฟล์เดียว (ต้องแนบ ZIP)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/></svg>
+      Download PDF รวม
     </button>
   </div>
 </div>
@@ -3277,6 +3306,9 @@
 
   const ttState = {
     file: null,
+    zipFiles: [],    // optional ZIP files containing invoice PDFs
+    pdfInv: null,    // Set of invoice numbers found in PDF filenames
+    pdfMatch: null,  // { total, matched, missing[], extra[], pdfCount }
     rawTx: [],     // raw transactions from source
     rows: [],      // final PEAK rows
     errors: [],
@@ -3370,6 +3402,50 @@
     $('drop-sub-tt').textContent = `${(file.size/1024).toFixed(1)} KB · พร้อมประมวลผล`;
     $('btn-parse-tt').disabled = false;
     $('btn-reset-tt').disabled = false;
+  }
+
+  // ----- Optional PDF ZIP upload (multiple files, accumulated) -----
+  const dzTtZip = $('dropzone-tt-zip');
+  const fiTtZip = $('fileInput-tt-zip');
+  ['dragenter','dragover'].forEach(ev => dzTtZip.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzTtZip.classList.add('active');
+  }));
+  ['dragleave','drop'].forEach(ev => dzTtZip.addEventListener(ev, e => {
+    e.preventDefault(); e.stopPropagation(); dzTtZip.classList.remove('active');
+  }));
+  dzTtZip.addEventListener('drop', e => addTtZips(e.dataTransfer.files));
+  fiTtZip.addEventListener('change', e => { addTtZips(e.target.files); fiTtZip.value = ''; });
+
+  function addTtZips(fileList) {
+    const zips = Array.from(fileList).filter(f => f.name.toLowerCase().endsWith('.zip'));
+    if (zips.length === 0) { toast('รองรับเฉพาะไฟล์ .zip', 'error'); return; }
+    let added = 0;
+    zips.forEach(f => {
+      if (!ttState.zipFiles.some(z => z.name === f.name && z.size === f.size)) {
+        ttState.zipFiles.push(f); added++;
+      }
+    });
+    updateTtZipLabel();
+    if (added > 0) {
+      toast(`เพิ่ม ${added} ไฟล์ ZIP · รวม ${ttState.zipFiles.length} ไฟล์`);
+      $('btn-reset-tt').disabled = false;
+    } else {
+      toast('ไฟล์ ZIP นี้ถูกเพิ่มไว้แล้ว', 'warn');
+    }
+  }
+
+  function updateTtZipLabel() {
+    const n = ttState.zipFiles.length;
+    if (n > 0) {
+      dzTtZip.classList.add('has-file');
+      const mb = ttState.zipFiles.reduce((s, f) => s + f.size, 0) / 1024 / 1024;
+      $('drop-title-tt-zip').textContent = `${n} ไฟล์ ZIP · ${mb.toFixed(1)} MB (คลิกเพื่อเพิ่มอีก)`;
+      $('drop-sub-tt-zip').textContent = ttState.zipFiles.map(f => f.name).join(' · ');
+    } else {
+      dzTtZip.classList.remove('has-file');
+      $('drop-title-tt-zip').textContent = 'แนบ ZIP ใบกำกับ PDF (ไม่บังคับ)';
+      $('drop-sub-tt-zip').textContent = 'เลือกได้หลายไฟล์ · ใช้ตรวจสอบว่า PDF ครบทุกใบกำกับใน Invoice list';
+    }
   }
 
   // ----- Parse transaction amount -----
@@ -3509,10 +3585,12 @@
       const dataRows = rows.slice(headerIdx + 1);
       const parsed = [];
       const skipped = [];
+      const allIds = new Set(); // every invoice no. in the file (incl. skipped) — for PDF matching
       for (let i = 0; i < dataRows.length; i++) {
         const r = dataRows[i] || [];
         if (r.every(c => c == null || c === '')) continue;
         const idRaw = r[colIdx.id];
+        if (idRaw) allIds.add(String(idRaw).trim());
         const tRaw  = r[colIdx.time];
         const amtRaw = r[colIdx.amount];
         const invStatusRaw = colIdx.invStatus >= 0 ? r[colIdx.invStatus] : '';
@@ -3522,9 +3600,11 @@
           skipped.push(`row ${headerIdx + 2 + i} · ข้อมูลไม่ครบ`);
           continue;
         }
-        // Skip invoices that have a linked credit note (already credited / cancelled)
-        if (cnRaw && String(cnRaw).trim() !== '') {
-          skipped.push(`row ${headerIdx + 2 + i} · ${String(idRaw).trim()} มี Credit Note (${String(cnRaw).trim()}) — ข้าม`);
+        // Skip only invoices with no actual payment (fully offset by credit notes).
+        // A partial credit note leaves the invoice "Paid" — still a real expense, keep it.
+        if (String(payStatusRaw || '').trim().toLowerCase() === 'no need to pay') {
+          const cnInfo = cnRaw && String(cnRaw).trim() !== '' ? ` · Credit Note ${String(cnRaw).trim()}` : '';
+          skipped.push(`row ${headerIdx + 2 + i} · ${String(idRaw).trim()} ไม่มีการจ่ายเงิน (No need to pay${cnInfo}) — ข้าม`);
           continue;
         }
         const tm = parseTxTime(tRaw);
@@ -3547,6 +3627,36 @@
       if (parsed.length === 0) throw new Error('ไม่พบข้อมูล transactions ที่ใช้ได้');
       ttState.rawTx = parsed;
       ttState.errors = skipped;
+
+      // ----- Match invoice PDFs from ZIP files (by invoice no. in filename) -----
+      ttState.pdfInv = null;
+      ttState.pdfMatch = null;
+      if (ttState.zipFiles.length > 0) {
+        pb.style.width = '65%';
+        pl.textContent = 'กำลังอ่าน ZIP (รายชื่อ PDF)…';
+        const pdfInv = new Set();
+        for (const zf of ttState.zipFiles) {
+          const zip = await JSZip.loadAsync(zf);
+          zip.forEach((path, entry) => {
+            if (entry.dir) return;
+            const base = path.split('/').pop();
+            if (!/\.pdf$/i.test(base)) return;
+            // e.g. Prod_V2_Invoice-Customer-THTT202604464389-7221009468094709761.pdf
+            const m = base.match(/Invoice-Customer-(.+?)-\d+\.pdf$/i) || base.match(/(THTT[A-Z]*\d+)/i);
+            if (m) pdfInv.add(m[1].trim());
+          });
+        }
+        ttState.pdfInv = pdfInv;
+        parsed.forEach(tx => { tx.hasPdf = pdfInv.has(tx.id); });
+        const missing = parsed.filter(tx => !tx.hasPdf).map(tx => tx.id);
+        const extra = [...pdfInv].filter(id => !allIds.has(id));
+        ttState.pdfMatch = {
+          total: parsed.length,
+          matched: parsed.length - missing.length,
+          missing, extra,
+          pdfCount: pdfInv.size
+        };
+      }
 
       pb.style.width = '75%';
       pl.textContent = 'กำลังสร้างรายการ PEAK…';
@@ -3614,6 +3724,7 @@
         const desc = `${descPrefix} วันที่ ${tx.timeParsed.display} เลขที่ใบกำกับ ${tx.id}`;
         out.push({
           _type: 'EXPENSE',
+          _hasPdf: ttState.pdfInv ? !!tx.hasPdf : null,
           groupSeq: 1,
           docDate, refTo: tx.id,
           contact, taxId, branch: '',
@@ -3650,6 +3761,7 @@
       btnParse.disabled = false;
       btnReset.disabled = false;
       btnExport.disabled = false;
+      $('btn-pdf-tt').disabled = !(ttState.zipFiles.length > 0);
     } catch (err) {
       console.error(err);
       toast('ผิดพลาด: ' + err.message, 'error');
@@ -3660,6 +3772,81 @@
     }
   });
 
+  // ----- Merge invoice PDFs of imported rows into one file (same order as Excel) -----
+  $('btn-pdf-tt').addEventListener('click', async () => {
+    if (ttState.rawTx.length === 0 || ttState.zipFiles.length === 0) return;
+    const btn = $('btn-pdf-tt');
+    btn.disabled = true;
+    const pb = $('progress-bar-tt'), pl = $('progress-label-tt'), pc = $('progress-count-tt');
+    $('progress-tt').classList.add('show');
+    try {
+      pl.textContent = 'กำลังอ่าน ZIP…';
+      pb.style.width = '5%';
+      // Map invoice no. → zip entry (first occurrence wins — dedups across zips)
+      const entries = new Map();
+      for (const zf of ttState.zipFiles) {
+        const zip = await JSZip.loadAsync(zf);
+        zip.forEach((path, entry) => {
+          if (entry.dir) return;
+          const base = path.split('/').pop();
+          if (!/\.pdf$/i.test(base)) return;
+          const m = base.match(/Invoice-Customer-(.+?)-\d+\.pdf$/i) || base.match(/(THTT[A-Z]*\d+)/i);
+          if (m && !entries.has(m[1].trim())) entries.set(m[1].trim(), entry);
+        });
+      }
+      const merged = await PDFLib.PDFDocument.create();
+      const missing = [];
+      let done = 0;
+      for (const tx of ttState.rawTx) {
+        const entry = entries.get(tx.id);
+        if (!entry) {
+          missing.push(tx.id);
+        } else {
+          const bytes = await entry.async('uint8array');
+          const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true, parseSpeed: PDFLib.ParseSpeeds.Fastest });
+          const pages = await merged.copyPages(src, src.getPageIndices());
+          pages.forEach(p => merged.addPage(p));
+        }
+        done++;
+        if (done % 10 === 0 || done === ttState.rawTx.length) {
+          pb.style.width = `${5 + Math.round(done / ttState.rawTx.length * 85)}%`;
+          pl.textContent = 'กำลังรวม PDF…';
+          pc.textContent = `${done} / ${ttState.rawTx.length}`;
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+      if (merged.getPageCount() === 0) throw new Error('ไม่พบ PDF ที่ตรงกับรายการนำเข้าเลย');
+      pl.textContent = 'กำลังสร้างไฟล์…';
+      pb.style.width = '95%';
+      await new Promise(r => setTimeout(r, 50));
+      // default save (object streams + yielding every 50 objects) takes minutes on ~700 pages
+      const out = await merged.save({ useObjectStreams: false, objectsPerTick: Infinity });
+      const blob = new Blob([out], { type: 'application/pdf' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      const ym = ttState.docDate ? ttState.docDate.slice(0, 6) : '';
+      a.download = `TikTokAds_Invoices_${ym}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      pb.style.width = '100%';
+      pl.textContent = 'เสร็จสิ้น';
+      setTimeout(() => { $('progress-tt').classList.remove('show'); pb.style.width = '0%'; }, 600);
+      if (missing.length > 0) {
+        toast(`รวม PDF สำเร็จ ${ttState.rawTx.length - missing.length} ใบ · ขาด ${missing.length} ใบ (ไม่มีใน ZIP)`, 'warn');
+      } else {
+        toast(`รวม PDF สำเร็จ · ${ttState.rawTx.length} ใบกำกับ · ${merged.getPageCount()} หน้า`, 'success');
+      }
+    } catch (err) {
+      console.error(err);
+      toast('รวม PDF ผิดพลาด: ' + err.message, 'error');
+      $('progress-tt').classList.remove('show');
+      pb.style.width = '0%';
+    }
+    btn.disabled = false;
+  });
+
   function renderTtResults() {
     $('empty-tt').style.display = 'none';
     $('results-tt').style.display = 'block';
@@ -3667,7 +3854,46 @@
     setStatNumber($('stat-tt-tx'), ttState.rawTx.length);
     setStatNumber($('stat-tt-sum'), ttState.totalSum, { fmt: formatMoney });
     setStatNumber($('stat-tt-pp36'), ttState.pp36, { fmt: formatMoney });
+    renderTtPdfMatch();
     renderTtTable();
+  }
+
+  function renderTtPdfMatch() {
+    const m = ttState.pdfMatch;
+    const statWrap = $('stat-pdf-tt');
+    const statVal = $('stat-tt-pdf');
+    const panel = $('pdf-match-tt');
+    const title = $('pdf-match-title-tt');
+    const ul = $('pdf-match-ul-tt');
+    if (!m) {
+      statWrap.style.display = 'none';
+      panel.classList.remove('show', 'ok');
+      return;
+    }
+    statWrap.style.display = '';
+    statVal.innerHTML = `${m.matched}<span class="unit"> / ${m.total}</span>`;
+    statVal.classList.toggle('warn', m.matched < m.total);
+
+    ul.innerHTML = '';
+    const problems = m.missing.length + m.extra.length;
+    if (problems === 0) {
+      panel.classList.add('show', 'ok');
+      title.textContent = `จับคู่ PDF ครบถ้วน · ${m.matched}/${m.total} ใบกำกับ (PDF ทั้งหมด ${m.pdfCount} ไฟล์ หลังตัดซ้ำ)`;
+    } else {
+      panel.classList.add('show');
+      panel.classList.remove('ok');
+      title.textContent = `จับคู่ PDF ได้ ${m.matched}/${m.total} · ขาด ${m.missing.length} · PDF เกิน ${m.extra.length}`;
+      m.missing.forEach(id => {
+        const li = document.createElement('li');
+        li.textContent = `ไม่พบ PDF ของใบกำกับ ${id}`;
+        ul.appendChild(li);
+      });
+      m.extra.forEach(id => {
+        const li = document.createElement('li');
+        li.textContent = `PDF ${id} ไม่มีใน Invoice list`;
+        ul.appendChild(li);
+      });
+    }
   }
 
   function renderTtTable() {
@@ -3679,7 +3905,7 @@
     else if (filter === 'expense') filtered = ttState.rows.filter(r => r._type === 'EXPENSE');
 
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
       return;
     }
     filtered.forEach((r, idx) => {
@@ -3694,6 +3920,12 @@
       const amtStr = typeof amount === 'number'
         ? amount.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})
         : '—';
+      let pdfCell = '—';
+      if (r._type === 'EXPENSE' && r._hasPdf !== null && r._hasPdf !== undefined) {
+        pdfCell = r._hasPdf
+          ? '<span style="color:var(--success);font-weight:700">✓</span>'
+          : '<span style="color:var(--danger);font-weight:700" title="ไม่พบ PDF">✗</span>';
+      }
       tr.innerHTML = `
         <td class="td-num">${idx + 1}</td>
         <td class="td-mono">${r.groupSeq}</td>
@@ -3702,6 +3934,7 @@
         <td class="td-desc-sm" title="${r.description.replace(/"/g,'&quot;')}">${r.description}</td>
         <td class="td-mono">${r.vatRate === 'NO' ? 'NO' : (r.vatRate*100).toFixed(0)+'%'}</td>
         <td class="td-mono">${r.payMethod || '—'}</td>
+        <td style="text-align:center">${pdfCell}</td>
         <td class="td-amount ${amtClass}">${amtStr}</td>`;
       tbody.appendChild(tr);
     });
@@ -3718,13 +3951,18 @@
 
   $('btn-reset-tt').addEventListener('click', () => {
     ttState.file = null; ttState.rawTx = []; ttState.rows = []; ttState.errors = [];
+    ttState.zipFiles = []; ttState.pdfInv = null; ttState.pdfMatch = null;
     ttState.currentFilter = 'all';
-    fiTt.value = '';
+    fiTt.value = ''; fiTtZip.value = '';
+    updateTtZipLabel();
+    $('pdf-match-tt').classList.remove('show', 'ok');
+    $('stat-pdf-tt').style.display = 'none';
     dzTt.classList.remove('has-file');
     $('drop-title-tt').textContent = 'คลิกเพื่อเลือกไฟล์ หรือลากวางที่นี่';
     $('drop-sub-tt').textContent = 'รองรับ .xlsx / .xls / .csv (Invoice list export)';
     $('btn-parse-tt').disabled = true;
     $('btn-export-tt').disabled = true;
+    $('btn-pdf-tt').disabled = true;
     $('btn-reset-tt').disabled = true;
     $('results-tt').style.display = 'none';
     $('empty-tt').style.display = 'block';
