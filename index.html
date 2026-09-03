@@ -1249,6 +1249,7 @@
   .tag-type.thj { background: var(--thj-soft); color: var(--thj); }
   .tag-type.cn { background: var(--cn-soft); color: var(--cn); }
   .tag-type.wht { background: var(--warn-soft); color: var(--warn); }
+  .tag-type.wht-vendor { background: var(--cn-soft); color: var(--cn); }
   .tag-type.skip {
     display: inline-flex; align-items: center;
     font-family: var(--font-mono);
@@ -1612,7 +1613,7 @@
       </div>
 
       <div class="config-group">
-        <div class="config-group-title">SPX Express <span class="tag spx-tiv">TIV</span> <span class="tag spx-rct">RCT</span> <span class="tag spx-rct">ขนส่ง · WHT 1%</span></div>
+        <div class="config-group-title">SPX Express <span class="tag spx-tiv">TIV</span> <span class="tag spx-rct">RCT</span> <span class="tag spx-rct">ขนส่ง · หักแทนแล้ว</span></div>
         <div class="config-row">
           <div class="config-label">ผู้รับเงิน</div>
           <input class="config-input" id="cfg-spx-contact" value="C00028" />
@@ -1623,7 +1624,7 @@
         </div>
         <div class="config-row">
           <div class="config-label">หัก ณ ที่จ่าย %</div>
-          <input class="config-input" id="cfg-spx-wht" value="1" />
+          <input class="config-input" id="cfg-spx-wht" value="0" />
         </div>
         <div class="config-row">
           <div class="config-label">ภ.ง.ด.</div>
@@ -2741,8 +2742,44 @@
     return round2(base * rate / 100);
   }
 
-  // Preview cell: "17.96  [1%]" when withheld, "—" when not
+  /* Some vendors (SPX Express) withhold on the payer's behalf and remit through
+     the Revenue Department's e-Withholding system. Their documents carry:
+       "บริษัทฯ ได้หักภาษีเงินได้ ณ ที่จ่ายในอัตราร้อยละ 1 เป็นจำนวนเงิน 0.38 บาท
+        แทนผู้จ่ายเงินได้แล้ว"
+       "The company has deducted 1% withholding tax on behalf of the payer at 0.38 THB"
+     When that remark is present we must NOT withhold again — pay the full amount.
+     pdf.js splits text into chunks joined by spaces, so match on a whitespace-
+     stripped copy: word breaks can land anywhere inside a Thai run. */
+  function detectVendorWht(fullText) {
+    const squashed = (fullText || '').replace(/\s+/g, '');
+    const lower = squashed.toLowerCase();
+    const found = squashed.includes('แทนผู้จ่ายเงินได้แล้ว') || lower.includes('onbehalfofthepayer');
+    if (!found) return { withheldByVendor: false, amount: null };
+    let m = squashed.match(/เป็นจำนวนเงิน([\d,]+\.\d+)บาท/);
+    if (!m) m = lower.match(/onbehalfofthepayerat([\d,]+\.\d+)thb/);
+    return {
+      withheldByVendor: true,
+      amount: m ? parseFloat(m[1].replace(/,/g, '')) : null
+    };
+  }
+
+  // Note line appended to the expense so the already-withheld tax is on record
+  function vendorWhtNote(v) {
+    if (!v.withheldByVendor) return '';
+    return v.amount === null
+      ? 'ผู้ขายหักภาษี ณ ที่จ่ายแทนผู้จ่ายเงินแล้ว (e-Withholding Tax)'
+      : `ผู้ขายหักภาษี ณ ที่จ่ายแทนผู้จ่ายเงินแล้ว ${v.amount.toFixed(2)} บาท (e-Withholding Tax)`;
+  }
+
+  // Preview cell: "17.96  [1%]" when withheld, "0.38  [หักแทนแล้ว]" when the
+  // vendor did it for us, "—" when there is no withholding at all
   function whtCell(row) {
+    if (row._whtByVendor) {
+      const a = row._vendorWhtAmt === null || row._vendorWhtAmt === undefined
+        ? ''
+        : row._vendorWhtAmt.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ';
+      return `${a}<span class="tag-type wht-vendor">หักแทนแล้ว</span>`;
+    }
     if (!row.wht) return '—';
     const a = (row._whtAmt || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
     return `${a} <span class="tag-type wht">${row.wht}%</span>`;
@@ -3138,12 +3175,18 @@
     const itemsNote = extractLineItemsNote(lineText);
     // Skip Shopee bills with 0 baht (not worth importing into PEAK)
     const skipZero = (type === 'Shopee-TIV' && total === 0);
-    // SPX Express is a transport company — withhold at source on its rows
+    // SPX Express is a transport company, but its documents say it already
+    // withheld the 1% on our behalf — in that case we pay the full amount.
     const vatRate = hasVatSection ? 0.07 : 'NO';
-    const whtAmt = whtAmountOf(total, vendor.wht, vatRate);
+    const vw = detectVendorWht(fullText);
+    const whtRate = vw.withheldByVendor ? 0 : vendor.wht;
+    const whtAmt = whtAmountOf(total, whtRate, vatRate);
+    const vwNote = vendorWhtNote(vw);
+    const noteText = vwNote ? (itemsNote ? `${itemsNote}\n${vwNote}` : vwNote) : itemsNote;
     return {
       _type: type, _fname: fname, _error: false,
       _hasVat: hasVatSection, _skip: skipZero, _whtAmt: whtAmt,
+      _whtByVendor: vw.withheldByVendor, _vendorWhtAmt: vw.amount,
       docDate, refTo: refFromFile,
       contact: vendor.contact, taxId: vendor.taxId, branch: g.branch,
       invoiceNo: hasVatSection ? invNumber : '',
@@ -3153,8 +3196,8 @@
       account: fee.account, description: fee.desc,
       qty: 1, unitPrice: total,
       vatRate,
-      wht: vendor.wht, payMethod: g.payMethod, paidAmount: round2(total - whtAmt),
-      pgd: vendor.wht ? vendor.pgd : '', note: itemsNote, category: '', seq: 0
+      wht: whtRate, payMethod: g.payMethod, paidAmount: round2(total - whtAmt),
+      pgd: whtRate ? vendor.pgd : '', note: noteText, category: '', seq: 0
     };
   }
 
@@ -4826,11 +4869,16 @@
     const fullInvNum = `${invPrefix}-${invNum}`;
 
     const vatRate = type === 'THJV' ? 'NO' : 0.07;
-    const whtAmt = whtAmountOf(total, cfg.wht, vatRate);
+    const vw = detectVendorWht(fullText);
+    const whtRate = vw.withheldByVendor ? 0 : cfg.wht;
+    const whtAmt = whtAmountOf(total, whtRate, vatRate);
+    const itemsNote = extractLineItemsNote(lineText);
+    const vwNote = vendorWhtNote(vw);
+    const noteText = vwNote ? (itemsNote ? `${itemsNote}\n${vwNote}` : vwNote) : itemsNote;
 
     return {
       _type: type, _fname: fname, _error: false, _skip: (type === 'TTSTH-CN'),
-      _whtAmt: whtAmt,
+      _whtAmt: whtAmt, _whtByVendor: vw.withheldByVendor, _vendorWhtAmt: vw.amount,
       docDate, refTo: fileToRef(fname),
       contact: cfg.contact, taxId: cfg.taxId, branch: g.branch,
       invoiceNo: type === 'THJV' ? '' : fullInvNum,     // THJV (receipt) doesn't need เลขที่ใบกำกับ
@@ -4842,10 +4890,10 @@
       qty: 1,
       unitPrice: total,
       vatRate,
-      wht: cfg.wht,
+      wht: whtRate,
       payMethod: g.payMethod,
       paidAmount: round2(total - whtAmt),
-      pgd: cfg.wht ? cfg.pgd : '', note: extractLineItemsNote(lineText), category: ''
+      pgd: whtRate ? cfg.pgd : '', note: noteText, category: ''
     };
   }
 
