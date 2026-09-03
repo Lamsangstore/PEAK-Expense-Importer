@@ -1248,6 +1248,7 @@
   .tag-type.tts { background: var(--tts-soft); color: var(--tts); }
   .tag-type.thj { background: var(--thj-soft); color: var(--thj); }
   .tag-type.cn { background: var(--cn-soft); color: var(--cn); }
+  .tag-type.wht { background: var(--warn-soft); color: var(--warn); }
   .tag-type.skip {
     display: inline-flex; align-items: center;
     font-family: var(--font-mono);
@@ -1611,7 +1612,7 @@
       </div>
 
       <div class="config-group">
-        <div class="config-group-title">SPX Express <span class="tag spx-tiv">TIV</span> <span class="tag spx-rct">RCT</span></div>
+        <div class="config-group-title">SPX Express <span class="tag spx-tiv">TIV</span> <span class="tag spx-rct">RCT</span> <span class="tag spx-rct">ขนส่ง · WHT 1%</span></div>
         <div class="config-row">
           <div class="config-label">ผู้รับเงิน</div>
           <input class="config-input" id="cfg-spx-contact" value="C00028" />
@@ -1619,6 +1620,14 @@
         <div class="config-row">
           <div class="config-label">เลขทะเบียน</div>
           <input class="config-input" id="cfg-spx-taxid" value="105561164871" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">หัก ณ ที่จ่าย %</div>
+          <input class="config-input" id="cfg-spx-wht" value="1" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">ภ.ง.ด.</div>
+          <input class="config-input" id="cfg-spx-pgd" value="53" />
         </div>
       </div>
 
@@ -1696,7 +1705,8 @@
             <tr>
               <th>#</th><th>Date</th><th>Type</th><th>ผู้รับเงิน</th>
               <th>เลขที่ใบกำกับฯ</th><th>บัญชี</th><th>คำอธิบาย</th>
-              <th>อัตราภาษี</th><th style="text-align:right">ยอดที่ชำระ</th>
+              <th>อัตราภาษี</th><th style="text-align:right">หัก ณ ที่จ่าย</th>
+              <th style="text-align:right">ยอดที่ชำระ</th>
             </tr>
           </thead>
           <tbody id="preview-body-pdf"></tbody>
@@ -2200,7 +2210,7 @@
       </div>
 
       <div class="config-group">
-        <div class="config-group-title">Thai Happy Logistics <span class="tag thj">RCT</span></div>
+        <div class="config-group-title">Thai Happy Logistics <span class="tag thj">RCT</span> <span class="tag thj">ขนส่ง · WHT 1%</span></div>
         <div class="config-row">
           <div class="config-label">ผู้รับเงิน</div>
           <input class="config-input" id="cfg-thj-contact" value="C00037" />
@@ -2216,6 +2226,14 @@
         <div class="config-row">
           <div class="config-label">คำอธิบาย</div>
           <input class="config-input" id="cfg-thj-desc" value="ค่าขนส่งสินค้า" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">หัก ณ ที่จ่าย %</div>
+          <input class="config-input" id="cfg-thj-wht" value="1" />
+        </div>
+        <div class="config-row">
+          <div class="config-label">ภ.ง.ด.</div>
+          <input class="config-input" id="cfg-thj-pgd" value="53" />
         </div>
       </div>
 
@@ -2269,7 +2287,8 @@
             <tr>
               <th>#</th><th>Date</th><th>Type</th><th>ผู้รับเงิน</th>
               <th>เลขที่ใบกำกับฯ</th><th>บัญชี</th><th>คำอธิบาย</th>
-              <th>อัตราภาษี</th><th style="text-align:right">ยอดที่ชำระ</th>
+              <th>อัตราภาษี</th><th style="text-align:right">หัก ณ ที่จ่าย</th>
+              <th style="text-align:right">ยอดที่ชำระ</th>
             </tr>
           </thead>
           <tbody id="preview-body-tts"></tbody>
@@ -2703,6 +2722,33 @@
   const $ = id => document.getElementById(id);
 
   /* ================================================================
+     Withholding tax (ภาษีหัก ณ ที่จ่าย)
+     Transport companies (SPX Express, Thai Happy Logistics) are withheld
+     at 1%. The PEAK template wants the RATE as a whole percent in the
+     "หัก ณ ที่จ่าย (ถ้ามี)" column; the amount is computed here only so
+     "จำนวนเงินที่ชำระ" can be reduced by it — PEAK rejects a payment that
+     still carries the full amount when WHT is present.
+     The base is the pre-VAT amount, so VAT-inclusive totals are grossed
+     down by the VAT rate first.
+  ================================================================ */
+  const round2 = n => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+
+  function whtAmountOf(total, ratePct, vatRate) {
+    const rate = Number(ratePct) || 0;
+    const amt = Number(total) || 0;
+    if (!rate || !amt) return 0;
+    const base = (typeof vatRate === 'number' && vatRate > 0) ? amt / (1 + vatRate) : amt;
+    return round2(base * rate / 100);
+  }
+
+  // Preview cell: "17.96  [1%]" when withheld, "—" when not
+  function whtCell(row) {
+    if (!row.wht) return '—';
+    const a = (row._whtAmt || 0).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    return `${a} <span class="tag-type wht">${row.wht}%</span>`;
+  }
+
+  /* ================================================================
      Custom cursor follow
   ================================================================ */
   (function initCursor() {
@@ -2946,11 +2992,15 @@
     if (type === 'Shopee-TIV') return {
       contact: $('cfg-shopee-contact').value.trim(),
       taxId: $('cfg-shopee-taxid').value.trim(),
+      wht: 0, pgd: '',
     };
-    // Both SPX-TIV and SPX-RCT use the same SPX contact
+    // Both SPX-TIV and SPX-RCT use the same SPX contact.
+    // SPX Express is a transport company — withhold 1% on every SPX row.
     return {
       contact: $('cfg-spx-contact').value.trim(),
       taxId: $('cfg-spx-taxid').value.trim(),
+      wht: parseFloat($('cfg-spx-wht').value) || 0,
+      pgd: $('cfg-spx-pgd').value.trim(),
     };
   }
   // Fee-type config — account + description by VAT presence
@@ -3018,7 +3068,7 @@
     const refFromFile = fileToRef(fname);
     return {
       _type: type, _fname: fname, _error: true,
-      _hasVat: hasVatGuess,
+      _hasVat: hasVatGuess, _whtAmt: 0,
       docDate, refTo: refFromFile,
       contact: vendor.contact, taxId: vendor.taxId, branch: g.branch,
       invoiceNo: hasVatGuess ? invNumber : '',
@@ -3028,8 +3078,8 @@
       account: fee.account, description: fee.desc,
       qty: 1, unitPrice: 0,
       vatRate: hasVatGuess ? 0.07 : 'NO',
-      wht: 0, payMethod: g.payMethod, paidAmount: 0,
-      pgd: '', note: '(ไฟล์อ่านไม่ได้)', category: '', seq: 0
+      wht: vendor.wht, payMethod: g.payMethod, paidAmount: 0,
+      pgd: vendor.wht ? vendor.pgd : '', note: '(ไฟล์อ่านไม่ได้)', category: '', seq: 0
     };
   }
 
@@ -3088,9 +3138,12 @@
     const itemsNote = extractLineItemsNote(lineText);
     // Skip Shopee bills with 0 baht (not worth importing into PEAK)
     const skipZero = (type === 'Shopee-TIV' && total === 0);
+    // SPX Express is a transport company — withhold at source on its rows
+    const vatRate = hasVatSection ? 0.07 : 'NO';
+    const whtAmt = whtAmountOf(total, vendor.wht, vatRate);
     return {
       _type: type, _fname: fname, _error: false,
-      _hasVat: hasVatSection, _skip: skipZero,
+      _hasVat: hasVatSection, _skip: skipZero, _whtAmt: whtAmt,
       docDate, refTo: refFromFile,
       contact: vendor.contact, taxId: vendor.taxId, branch: g.branch,
       invoiceNo: hasVatSection ? invNumber : '',
@@ -3099,9 +3152,9 @@
       priceType: hasVatSection ? 2 : 3,
       account: fee.account, description: fee.desc,
       qty: 1, unitPrice: total,
-      vatRate: hasVatSection ? 0.07 : 'NO',
-      wht: 0, payMethod: g.payMethod, paidAmount: total,
-      pgd: '', note: itemsNote, category: '', seq: 0
+      vatRate,
+      wht: vendor.wht, payMethod: g.payMethod, paidAmount: round2(total - whtAmt),
+      pgd: vendor.wht ? vendor.pgd : '', note: itemsNote, category: '', seq: 0
     };
   }
 
@@ -3231,7 +3284,7 @@
       ? pdfState.rows
       : pdfState.rows.filter(r => r._type === pdfState.currentFilter);
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
       return;
     }
     const tagMap = {
@@ -3256,6 +3309,7 @@
         <td class="td-mono">${r.account}</td>
         <td>${r.description}</td>
         <td class="td-mono">${r.vatRate === 'NO' ? 'NO' : (r.vatRate*100).toFixed(0)+'%'}</td>
+        <td class="td-amount">${whtCell(r)}</td>
         <td class="td-amount">${r.paidAmount.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>`;
       tbody.appendChild(tr);
     });
@@ -4671,15 +4725,19 @@
       contact: $('cfg-tts-contact').value.trim(),
       taxId: $('cfg-tts-taxid').value.trim(),
       account: $('cfg-tts-account').value.trim(),
-      desc: $('cfg-tts-desc').value.trim()
+      desc: $('cfg-tts-desc').value.trim(),
+      wht: 0, pgd: ''
     };
+    // Thai Happy Logistics is a transport company — withhold 1% at source
     if (type === 'THJV') return {
       contact: $('cfg-thj-contact').value.trim(),
       taxId: $('cfg-thj-taxid').value.trim(),
       account: $('cfg-thj-account').value.trim(),
-      desc: $('cfg-thj-desc').value.trim()
+      desc: $('cfg-thj-desc').value.trim(),
+      wht: parseFloat($('cfg-thj-wht').value) || 0,
+      pgd: $('cfg-thj-pgd').value.trim()
     };
-    return {};
+    return { wht: 0, pgd: '' };
   }
   function getTtsGlobalConfig() {
     return {
@@ -4767,8 +4825,12 @@
     if (type === 'TTSTH-CN') invPrefix = 'CN';
     const fullInvNum = `${invPrefix}-${invNum}`;
 
+    const vatRate = type === 'THJV' ? 'NO' : 0.07;
+    const whtAmt = whtAmountOf(total, cfg.wht, vatRate);
+
     return {
       _type: type, _fname: fname, _error: false, _skip: (type === 'TTSTH-CN'),
+      _whtAmt: whtAmt,
       docDate, refTo: fileToRef(fname),
       contact: cfg.contact, taxId: cfg.taxId, branch: g.branch,
       invoiceNo: type === 'THJV' ? '' : fullInvNum,     // THJV (receipt) doesn't need เลขที่ใบกำกับ
@@ -4779,11 +4841,11 @@
       description: cfg.desc,
       qty: 1,
       unitPrice: total,
-      vatRate: type === 'THJV' ? 'NO' : 0.07,
-      wht: 0,
+      vatRate,
+      wht: cfg.wht,
       payMethod: g.payMethod,
-      paidAmount: total,
-      pgd: '', note: extractLineItemsNote(lineText), category: ''
+      paidAmount: round2(total - whtAmt),
+      pgd: cfg.wht ? cfg.pgd : '', note: extractLineItemsNote(lineText), category: ''
     };
   }
 
@@ -4800,6 +4862,7 @@
     const invNum = fname.replace(/\.pdf$/i, '');
     return {
       _type: type, _fname: fname, _error: true, _skip: (type === 'TTSTH-CN'),
+      _whtAmt: 0,
       docDate, refTo: fileToRef(fname),
       contact: cfg.contact || '', taxId: cfg.taxId || '', branch: g.branch,
       invoiceNo: type === 'THJV' ? '' : `${invPrefix}-${invNum}`,
@@ -4811,10 +4874,10 @@
       qty: 1,
       unitPrice: 0,
       vatRate: type === 'THJV' ? 'NO' : 0.07,
-      wht: 0,
+      wht: cfg.wht || 0,
       payMethod: g.payMethod,
       paidAmount: 0,
-      pgd: '', note: '(ไฟล์อ่านไม่ได้)', category: ''
+      pgd: cfg.wht ? cfg.pgd : '', note: '(ไฟล์อ่านไม่ได้)', category: ''
     };
   }
 
@@ -4943,7 +5006,7 @@
       ? ttsState.rows
       : ttsState.rows.filter(r => r._type === ttsState.currentFilter);
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-3)">ไม่มีข้อมูล</td></tr>';
       return;
     }
     const tagMap = {
@@ -4972,6 +5035,7 @@
         <td class="td-mono">${r.account || '—'}</td>
         <td>${r.description || ''}</td>
         <td class="td-mono">${r.vatRate === 'NO' ? 'NO' : (r.vatRate*100).toFixed(0)+'%'}</td>
+        <td class="td-amount">${whtCell(r)}</td>
         <td class="td-amount">${(r.paidAmount || 0).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>`;
       tbody.appendChild(tr);
     });
