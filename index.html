@@ -2680,6 +2680,13 @@
   // PEAK's "อ้างอิงถึง" column accepts max 32 chars.
   // If filename is longer, keep the last 32 (the meaningful invoice ID portion,
   // not the vendor prefix like "Shopee-TIV-" or "SPX Express-TIV-").
+  // macOS "Compress" adds AppleDouble resource forks (__MACOSX/.../._name.pdf)
+  // that look like PDFs but are not — skip them so they don't show up as errors.
+  function isMacResourceFork(path) {
+    const base = path.split('/').pop();
+    return path.startsWith('__MACOSX/') || path.includes('/__MACOSX/') || base.startsWith('._');
+  }
+
   function fileToRef(fname) {
     const base = fname.replace(/\.pdf$/i, '');
     if (base.length <= 32) return base;
@@ -3218,6 +3225,7 @@
       const pdfFiles = [];
       zip.forEach((path, file) => {
         if (file.dir || !path.toLowerCase().endsWith('.pdf')) return;
+        if (isMacResourceFork(path)) return;
         pdfFiles.push({ base: path.split('/').pop(), file });
       });
       if (pdfFiles.length === 0) {
@@ -4545,6 +4553,7 @@
       const pdfFiles = [];
       zip.forEach((path, file) => {
         if (file.dir || !path.toLowerCase().endsWith('.pdf')) return;
+        if (isMacResourceFork(path)) return;
         pdfFiles.push({ base: path.split('/').pop(), file });
       });
       if (pdfFiles.length === 0) {
@@ -4947,6 +4956,7 @@
       const seen = new Set();
       zip.forEach((path, file) => {
         if (file.dir || !path.toLowerCase().endsWith('.pdf')) return;
+        if (isMacResourceFork(path)) return;
         const base = path.split('/').pop();
         // Deduplicate (some ZIPs contain the same file twice)
         if (seen.has(base)) return;
@@ -5214,8 +5224,10 @@
     const text = chunks.join('');
     const flat = text.replace(/\n/g, ' ');
 
-    // Amount: "185.78 THB\n185.78 THBTotal:" pattern
-    const mAmt = flat.match(/([\d,]+\.\d+)\s*THB\s*[\d,]+\.\d+\s*THBTotal:/);
+    // Amount: "185.78 THB  185.78 THB  Total:" pattern.
+    // pdf.js splits text into chunks joined by spaces, and the split point between
+    // "THB" and "Total:" varies between PDF generations, so allow optional space.
+    const mAmt = flat.match(/([\d,]+\.\d+)\s*THB\s*[\d,]+\.\d+\s*THB\s*Total:/);
     const total = mAmt ? parseFloat(mAmt[1].replace(/,/g, '')) : null;
     if (total === null || isNaN(total)) throw new Error('อ่านยอดเงินไม่ได้');
 
@@ -5272,6 +5284,7 @@
         if (file.dir) return;
         const base = path.split('/').pop();
         if (!base.toLowerCase().endsWith('.pdf')) return;
+        if (isMacResourceFork(path)) return;
         if (seen.has(base)) return;
         seen.add(base);
         pdfFiles.push({ base, file });
